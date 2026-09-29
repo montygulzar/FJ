@@ -83,6 +83,9 @@ class ModBot(commands.Bot):
         )
         self.health = HealthServer(self)
         self.app_command_ids: dict[str, int] = {}
+        # Read by /syscheck.
+        self.failed_extensions: list[str] = []
+        self.sync_error: str | None = None
 
     async def setup_hook(self) -> None:
         loaded, failed = 0, []
@@ -95,6 +98,7 @@ class ModBot(commands.Bot):
                 failed.append(extension)
                 logger.exception("Failed to load extension %s", extension)
         logger.info("Loaded %d/%d extensions", loaded, len(INITIAL_COGS))
+        self.failed_extensions = failed
         if failed:
             logger.error("Extensions unavailable this run: %s", ", ".join(failed))
 
@@ -106,6 +110,7 @@ class ModBot(commands.Bot):
         except discord.HTTPException as error:
             # Usually a rate limit. The bot still works via prefix commands and the
             # previously-registered slash commands, so this is not fatal.
+            self.sync_error = str(error)
             logger.warning("Slash command sync failed (%s) - existing commands remain registered", error)
 
     async def on_ready(self) -> None:

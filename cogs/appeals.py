@@ -32,6 +32,7 @@ from config import (
     APPEAL_COOLDOWN_DAYS,
     APPEAL_MIN_VOTES,
     APPEAL_PING_VOTERS,
+    APPEAL_TEAM_NAME,
     APPEAL_VOTER_ROLE_IDS,
     APPEALS_CHANNEL_ID,
     DEVELOPER_NAME,
@@ -60,15 +61,17 @@ from embeds import (
     SUCCESS_COLOR,
     WARNING_ICON,
     branded,
+    build_appeal_decision_dm,
+    build_appeal_receipt_dm,
     build_notice_embed,
     clamp,
     format_timestamp,
-    logo_url,
     style_for,
 )
 from guards import is_blocked, member_tier_index, tier_index
 from modlog import record_case_full, try_dm
-from notify import dm_unban
+from notify import rejoin_invite
+from views import link_view
 
 logger = logging.getLogger("modbot.appeals")
 
@@ -332,22 +335,10 @@ async def carry_out(bot: commands.Bot, appeal, accepted: bool, approve: int, den
 
     if not accepted:
         if user is not None:
-            dm = discord.Embed(
-                title="\U0001F534  Your appeal was denied",
-                description=(
-                    f"Your appeal (**#{appeal['id']}**) to **{guild.name if guild else 'the server'}** "
-                    f"was denied after a {tally_text}."
-                ),
-                color=DANGER_COLOR,
+            retry_at = (
+                discord.utils.utcnow() + timedelta(days=APPEAL_COOLDOWN_DAYS) if APPEAL_COOLDOWN_DAYS else None
             )
-            if guild is not None:
-                dm.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
-            if logo_url():
-                dm.set_thumbnail(url=logo_url())
-            if APPEAL_COOLDOWN_DAYS:
-                retry_at = discord.utils.utcnow() + timedelta(days=APPEAL_COOLDOWN_DAYS)
-                dm.add_field(name="Appeal again", value=discord.utils.format_dt(retry_at, "R"), inline=False)
-            await try_dm(user, branded(dm, footer_prefix="Automated notice"))
+            await try_dm(user, build_appeal_decision_dm(appeal["id"], guild, APPEAL_TEAM_NAME, False, retry_at=retry_at))
         return None
 
     if guild is None:
@@ -368,12 +359,13 @@ async def carry_out(bot: commands.Bot, appeal, accepted: bool, approve: int, den
         await remove_temp_ban(guild.id, appeal["user_id"])
 
     if unbanned and user is not None:
-        case_id = None
         if note is None and bot.user is not None:
-            _, case_id = await record_case_full(guild, user, bot.user, "unban", reason)
-        await dm_unban(
-            user, guild, reason, case_id=case_id,
-            note="\U0001F7E2 Your appeal was **approved** by staff. Welcome back - please follow the rules.",
+            await record_case_full(guild, user, bot.user, "unban", reason)
+        invite = await rejoin_invite(guild, f"Rejoin invite after appeal #{appeal['id']} was approved")
+        await try_dm(
+            user,
+            build_appeal_decision_dm(appeal["id"], guild, APPEAL_TEAM_NAME, True),
+            link_view(f"Rejoin {guild.name}", invite, "\U0001F6AA"),
         )
     return note
 
@@ -448,9 +440,11 @@ class AppealModal(discord.ui.Modal, title="Ban Appeal"):
 
         await set_appeal_message(appeal_id, message.id)
         await post_appeal_alert(bot, appeal_id, user, guild, message)
+        # A DM copy, since the ephemeral confirmation disappears.
+        await try_dm(user, build_appeal_receipt_dm(appeal_id, guild, APPEAL_TEAM_NAME, self.answer.value))
         confirmation = build_notice_embed(
             f"Your appeal to **{guild.name}** has been sent to staff. "
-            "Staff will vote on it, and I'll DM you the result.",
+            f"The **{APPEAL_TEAM_NAME}** will review your case, and I'll DM you the result.",
             title=f"Appeal #{appeal_id} submitted",
         )
         await interaction.followup.send(embed=confirmation, ephemeral=True)

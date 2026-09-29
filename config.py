@@ -181,20 +181,35 @@ APPEAL_VOTER_ROLE_IDS = _parse_id_list("APPEAL_VOTER_ROLE_IDS")
 APPEAL_MIN_VOTES = _parse_int("APPEAL_MIN_VOTES", 3, minimum=1, maximum=25)
 # Mention the voter roles in the alert channel when a new appeal arrives.
 APPEAL_PING_VOTERS = _parse_bool("APPEAL_PING_VOTERS", True)
+# Who appeal decisions are signed by ("The FJUSA Ban Team has reviewed your case").
+APPEAL_TEAM_NAME = _env("APPEAL_TEAM_NAME") or f"{SERVER_DISPLAY_NAME} Ban Team"
 # How long someone must wait to appeal again after a denial.
 APPEAL_COOLDOWN_DAYS = _parse_int("APPEAL_COOLDOWN_DAYS", 7, minimum=0, maximum=365)
 
 # --- Log channels -------------------------------------------------------------
 # Each is a comma-separated list of channel IDs, one per server: an event is posted
-# to the channel in the list that belongs to the server it happened in. A category
-# left empty falls back to /setlogchannel (moderation) or /setserverlogchannel.
+# to the channel in the list that belongs to the server it happened in. A kind left
+# empty falls back to /setlogchannel (Mod Logs) or /setserverlogchannel (the rest).
+# The older *_LOG_CHANNEL_IDS names are still accepted.
 LOG_CHANNEL_IDS = {
-    "mod": _parse_id_list("MOD_LOG_CHANNEL_IDS"),          # cases, lockdowns, purges
-    "message": _parse_id_list("MESSAGE_LOG_CHANNEL_IDS"),  # edits and deletes
-    "member": _parse_id_list("MEMBER_LOG_CHANNEL_IDS"),    # joins, leaves, roles, nicknames, bans
-    "voice": _parse_id_list("VOICE_LOG_CHANNEL_IDS"),      # voice joins, moves, leaves
-    "server": _parse_id_list("SERVER_LOG_CHANNEL_IDS"),    # channels, roles, invites
-    "alert": _parse_id_list("ALERT_LOG_CHANNEL_IDS"),      # raid and alt-account alerts
+    "mod": _parse_id_list("MOD_LOGS_CHANNEL_IDS", "MOD_LOG_CHANNEL_IDS"),
+    "chat": _parse_id_list("CHAT_LOGS_CHANNEL_IDS", "MESSAGE_LOG_CHANNEL_IDS"),
+    "join": _parse_id_list("JOIN_LOGS_CHANNEL_IDS"),
+    "member": _parse_id_list("MEMBER_LOGS_CHANNEL_IDS", "MEMBER_LOG_CHANNEL_IDS"),
+    "voice": _parse_id_list("VOICE_LOGS_CHANNEL_IDS", "VOICE_LOG_CHANNEL_IDS"),
+    "server": _parse_id_list("SERVER_LOGS_CHANNEL_IDS", "SERVER_LOG_CHANNEL_IDS"),
+    "security": _parse_id_list("SECURITY_LOGS_CHANNEL_IDS", "ALERT_LOG_CHANNEL_IDS"),
+}
+
+# Display name and what each kind of log carries.
+LOG_KINDS = {
+    "mod":      ("\U0001F528 Mod Logs",      "Cases, lockdowns and purges"),
+    "chat":     ("\U0001F4AC Chat Logs",     "Edited and deleted messages"),
+    "join":     ("\U0001F6AA Join Logs",     "Members joining and leaving"),
+    "member":   ("\U0001F464 Member Logs",   "Role and nickname changes, bans and unbans"),
+    "voice":    ("\U0001F3A7 Voice Logs",    "Voice joins, moves and leaves"),
+    "server":   ("\U0001F3D7\uFE0F Server Logs", "Channel, role and invite changes"),
+    "security": ("\U0001F6E1\uFE0F Security Logs", "Raid and alt-account alerts"),
 }
 
 # Role given by /mute and removed by /unmute. /tempmute uses Discord's timeout

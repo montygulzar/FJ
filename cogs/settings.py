@@ -19,17 +19,9 @@ from modlog import (
     check_log_channel,
     check_server_log_channel,
     env_log_channel_id,
+    log_label,
     resolve_log_channel_id,
 )
-
-LOG_LABELS = {
-    "mod": "Moderation",
-    "message": "Messages",
-    "member": "Members",
-    "voice": "Voice",
-    "server": "Server",
-    "alert": "Alerts",
-}
 
 MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap on a timeout: 28 days
 
@@ -78,8 +70,8 @@ class Settings(commands.Cog):
         for category in LOG_CATEGORIES:
             channel_id = await resolve_log_channel_id(ctx.guild, category)
             source = " *(env)*" if env_log_channel_id(ctx.guild, category) else ""
-            routing.append(f"**{LOG_LABELS[category]}**: {await _channel_display(ctx.guild, channel_id)}{source}")
-        embed.add_field(name="\U0001F4DC  Log routing", value="\n".join(routing), inline=False)
+            routing.append(f"**{log_label(category)}**: {await _channel_display(ctx.guild, channel_id)}{source}")
+        embed.add_field(name="\U0001F4DC  Logs", value="\n".join(routing), inline=False)
         embed.add_field(name="Lockdown roles", value=lockdown_value, inline=False)
         embed.add_field(
             name="Raid protection",
@@ -159,16 +151,16 @@ class Settings(commands.Cog):
         await ctx.defer()
         lines = []
         for category in LOG_CATEGORIES:
-            label = LOG_LABELS[category]
+            label = log_label(category)
             channel_id = await resolve_log_channel_id(ctx.guild, category)
             channel = await _resolve_channel(ctx.guild, channel_id) if channel_id else None
             if channel is None:
-                lines.append(f"\U0001F534 **{label}** - no channel set")
+                lines.append(f"\u26AA **{label}** - no channel set")
                 continue
             try:
                 await channel.send(embed=base_embed(
-                    f"\U0001F9EA  Test - {label} log", NEUTRAL_COLOR,
-                    f"If you can see this, **{label.lower()}** logs arrive here.",
+                    f"\U0001F9EA  Test - {label}", NEUTRAL_COLOR,
+                    f"If you can see this, **{label}** arrive here.",
                 ))
                 lines.append(f"\U0001F7E2 **{label}** - {channel.mention}")
             except discord.HTTPException as error:

@@ -566,16 +566,29 @@ DEFAULT_SETTINGS: dict = {
 _SETTINGS_COLUMNS = frozenset(DEFAULT_SETTINGS)
 
 
+# Every logged event (each edited or deleted message, every join) reads these
+# settings, so they're cached. Only this process writes them, and every write goes
+# through _invalidate_settings, so the cache can't go stale.
+_settings_cache: dict[int, dict] = {}
+
+
+def _invalidate_settings(guild_id: int) -> None:
+    _settings_cache.pop(guild_id, None)
+
+
 async def get_guild_settings(guild_id: int) -> dict:
-    row = await _fetch_one("SELECT * FROM guild_settings WHERE guild_id = $1", guild_id)
-    if row is None:
-        return {"guild_id": guild_id, **DEFAULT_SETTINGS}
-    return dict(row)
+    cached = _settings_cache.get(guild_id)
+    if cached is None:
+        row = await _fetch_one("SELECT * FROM guild_settings WHERE guild_id = $1", guild_id)
+        cached = {"guild_id": guild_id, **DEFAULT_SETTINGS} if row is None else dict(row)
+        _settings_cache[guild_id] = cached
+    return dict(cached)  # a copy, so callers can't change the cached value
 
 
 async def _upsert_settings(guild_id: int, column: str, value) -> None:
     if column not in _SETTINGS_COLUMNS:
         raise ValueError(f"Refusing to write unknown settings column {column!r}")
+    _invalidate_settings(guild_id)
     await _execute(
         f"""
         INSERT INTO guild_settings (guild_id, {column})
@@ -585,6 +598,7 @@ async def _upsert_settings(guild_id: int, column: str, value) -> None:
         guild_id, value,
         idempotent=True,
     )
+    _invalidate_settings(guild_id)
 
 
 async def set_log_channel(guild_id: int, channel_id: int) -> None:
@@ -599,10 +613,6 @@ async def set_announce_channel(guild_id: int, channel_id: int | None) -> None:
     await _upsert_settings(guild_id, "announce_channel_id", channel_id)
 
 
-async def set_lockdown_role(guild_id: int, role_id: int | None) -> None:
-    await _upsert_settings(guild_id, "lockdown_role_id", role_id)
-
-
 async def set_raid_protection(guild_id: int, min_account_age_hours: int | None) -> None:
     await _upsert_settings(guild_id, "raid_min_account_age_hours", min_account_age_hours)
 
@@ -614,6 +624,7 @@ async def set_warn_thresholds(
     kick_threshold: int | None,
     ban_threshold: int | None,
 ) -> None:
+    _invalidate_settings(guild_id)
     await _execute(
         """
         INSERT INTO guild_settings
@@ -628,6 +639,7 @@ async def set_warn_thresholds(
         guild_id, mute_threshold, mute_minutes, kick_threshold, ban_threshold,
         idempotent=True,
     )
+    _invalidate_settings(guild_id)
 
 
 # --- Lockdown roles ----------------------------------------------------------
@@ -903,6 +915,20 @@ async def check_connection() -> tuple[bool, str]:
         return True, f"{elapsed_ms:.1f}ms"
     except Exception as error:
         return False, f"{type(error).__name__}: query failed"
+
+
+EXPECTED_TABLES = (
+    "cases", "guild_settings", "lockdown_roles", "temp_bans", "channel_locks",
+    "appeals", "appeal_votes", "global_blacklist",
+)
+
+
+async def missing_tables() -> list[str]:
+    rows = await _fetch_all(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"
+    )
+    present = {row["table_name"] for row in rows}
+    return [table for table in EXPECTED_TABLES if table not in present]
 
 
 async def get_total_case_count() -> int:

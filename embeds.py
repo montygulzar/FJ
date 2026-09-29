@@ -30,7 +30,6 @@ MUTED_COLOR = 0x64748B
 SUCCESS_ICON = "✅"
 ERROR_ICON = "❌"
 WARNING_ICON = "⚠️"
-INFO_ICON = "ℹ️"
 
 ACTION_STYLES = {
     "warn":          ActionStyle(0xF59E0B, "⚠️", "Warning",       "You were warned in {location}."),
@@ -47,7 +46,6 @@ ACTION_STYLES = {
     "global_ban":    ActionStyle(0x991B1B, "\U0001F310", "Global Ban",      "You were banned across all {network} servers."),
     "global_unban":  ActionStyle(SUCCESS_COLOR, "\U0001F513", "Global Unban", "You were unbanned across all {network} servers."),
     "blacklist":     ActionStyle(0x7F1D1D, "\u26D4", "Blacklist",         "You were blacklisted from {location}."),
-    "note":          ActionStyle(BRAND_COLOR, "\U0001F4DD", "Staff Note",   ""),
 }
 
 FALLBACK_STYLE = ActionStyle(NEUTRAL_COLOR, "\U0001F4CB", "Action", "")
@@ -59,8 +57,6 @@ AUDIT_REASON_LIMIT = 512
 EMBED_FIELD_LIMIT = 1024
 EMBED_DESCRIPTION_LIMIT = 4096
 
-# Zero-width field used to force a new row in a grid of inline fields.
-BLANK = "​"
 
 
 def set_brand_icon(url: str) -> None:
@@ -148,16 +144,6 @@ def build_notice_embed(message: str, *, success: bool = True, title: str | None 
         title=f"{icon}  {title}" if title else None,
         description=clamp(message if title else f"{icon}  {message}", EMBED_DESCRIPTION_LIMIT, empty="Done."),
         color=SUCCESS_COLOR if success else DANGER_COLOR,
-    )
-    return branded(embed)
-
-
-def build_info_embed(message: str, *, title: str | None = None) -> discord.Embed:
-    """Neutral information: nothing succeeded or failed."""
-    embed = discord.Embed(
-        title=f"{INFO_ICON}  {title}" if title else None,
-        description=clamp(message if title else f"{INFO_ICON}  {message}", EMBED_DESCRIPTION_LIMIT, empty=BLANK),
-        color=NEUTRAL_COLOR,
     )
     return branded(embed)
 
@@ -332,3 +318,59 @@ def build_ban_dm_embed(
             inline=False,
         )
     return branded(embed, footer_prefix="Automated notice")
+
+
+def _appeal_dm_base(title: str, color: int, guild: discord.Guild | None) -> discord.Embed:
+    embed = discord.Embed(title=title, color=color)
+    if guild is not None:
+        embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+    if logo_url():
+        embed.set_thumbnail(url=logo_url())
+    return embed
+
+
+def build_appeal_receipt_dm(appeal_id: int, guild: discord.Guild | None, team: str, answer: str) -> discord.Embed:
+    """Sent when an appeal is submitted, so the user has a record of it."""
+    embed = _appeal_dm_base("\U0001F4E8  Appeal received", NEUTRAL_COLOR, guild)
+    embed.description = (
+        f"Thanks - the **{team}** has your appeal and will review your case.\n"
+        "You'll get a DM from me as soon as there's a decision."
+    )
+    embed.add_field(name="Appeal", value=f"`#{appeal_id}`", inline=True)
+    embed.add_field(name="Server", value=guild.name if guild else "Unknown", inline=True)
+    embed.add_field(name="Status", value="\u23F3 Under review", inline=True)
+    embed.add_field(name="What you wrote", value=f">>> {clamp(answer, 1000)}", inline=False)
+    return branded(embed, footer_prefix=team)
+
+
+def build_appeal_decision_dm(
+    appeal_id: int,
+    guild: discord.Guild | None,
+    team: str,
+    approved: bool,
+    *,
+    retry_at: datetime | None = None,
+) -> discord.Embed:
+    """"The FJUSA Ban Team has reviewed your case and approved/denied your appeal." """
+    where = f"**{guild.name}**" if guild else "the server"
+    if approved:
+        embed = _appeal_dm_base("\u2696\uFE0F  Appeal approved", SUCCESS_COLOR, guild)
+        embed.description = (
+            f"The **{team}** has reviewed your case and **approved** your appeal. \U0001F7E2\n"
+            f"Your ban from {where} has been lifted."
+        )
+        embed.add_field(name="Next steps", value="Use **Rejoin** below if it's there, and please follow the rules.", inline=False)
+    else:
+        embed = _appeal_dm_base("\u2696\uFE0F  Appeal denied", DANGER_COLOR, guild)
+        embed.description = (
+            f"The **{team}** has reviewed your case and **denied** your appeal. \U0001F534\n"
+            f"Your ban from {where} stays in place."
+        )
+        embed.add_field(
+            name="Appeal again",
+            value=f"{discord.utils.format_dt(retry_at, 'f')} ({discord.utils.format_dt(retry_at, 'R')})" if retry_at else "Now",
+            inline=False,
+        )
+    embed.add_field(name="Appeal", value=f"`#{appeal_id}`", inline=True)
+    embed.add_field(name="Result", value="\U0001F7E2 Approved" if approved else "\U0001F534 Denied", inline=True)
+    return branded(embed, footer_prefix=team)

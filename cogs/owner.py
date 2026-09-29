@@ -7,31 +7,15 @@ from discord.ext import commands
 from config import APPROVED_GUILD_IDS
 from embeds import NEUTRAL_COLOR, audit_reason, base_embed, branded, build_notice_embed, clamp, set_brand_icon
 from guards import has_tier
+from notify import create_invite
 
 GUILDS_PER_EMBED = 10
 LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "fjusa-logo.png"
 
 
 async def resolve_invite(guild: discord.Guild) -> str | None:
-    """Reuse an existing invite where possible so repeated calls don't litter the server with new ones."""
-    if guild.me is None:
-        return None
-
-    for channel in guild.text_channels:
-        if not channel.permissions_for(guild.me).create_instant_invite:
-            continue
-        try:
-            invite = await channel.create_invite(
-                max_age=86400,  # 24 hours. Avoids leaving permanent invites lying around.
-                max_uses=0,
-                unique=False,
-                reason="Requested by bot owner",
-            )
-            return invite.url
-        except discord.HTTPException:
-            continue
-
-    return None
+    """A reusable 24h invite, so repeated /servers calls don't litter the server with new ones."""
+    return await create_invite(guild, reason="Requested by bot owner", max_uses=0, unique=False)
 
 
 class Owner(commands.Cog):

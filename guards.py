@@ -114,19 +114,6 @@ def from_approved_guild():
     return commands.check(predicate)
 
 
-def is_bot_owner():
-    """Command check restricting a command to OWNER_IDS.
-
-    Kept for backward compatibility. New commands should use
-    has_tier("dev") instead.
-    """
-
-    async def predicate(ctx: commands.Context) -> bool:
-        return ctx.author.id in OWNER_IDS
-
-    return commands.check(predicate)
-
-
 def is_blocked(user_id: int) -> bool:
     """Users on the deny list cannot use the bot at all."""
     return user_id in BLOCKED_USER_IDS

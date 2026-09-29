@@ -19,7 +19,7 @@ Dev is **user IDs**. `OWNER_IDS` bypass everything.
 | **Staff** | `STAFF_ROLE_IDS` | `warn` `mute` `tempmute` `unmute` `kick` `tempban` `unban` `cases` `casesearch` `purge` `slowmode` `userinfo` + right-click **User Profile** |
 | **Staff Director** | `STAFF_DIRECTOR_ROLE_IDS` | + `ban` `caseedit` `casedelete` `caseexport` `modstats` `lockdown` `unlock` `addlockdownrole` `removelockdownrole` `clearlockdownroles` + **appeal votes** (default voters) |
 | **Gov** | `GOV_ROLE_IDS` | + `blacklist` `globalban` `globalunban` `globalkick` `globalmute` `globalunmute` `globalblacklist list/add/remove/check` `globalannounce` `globallockdown` `globalunlock` `settings` `setlogchannel` `setserverlogchannel` `setannouncechannel` `testlog` `setraidprotection` `setwarnthresholds` `backupserver` `restorebackup` |
-| **Dev** | `DEV_USER_IDS` | + `debug` `health` `servers` `addrole` `setlogo` |
+| **Dev** | `DEV_ROLE_IDS` / `DEV_USER_IDS` | + `syscheck` `debug` `health` `servers` `addrole` `setlogo` |
 
 Anyone can run `/help`.
 
@@ -52,7 +52,8 @@ anything.
 | `/globalban` / global blacklist (Gov+) | Permanent, every server | 🔴 **Final** | Message Developer |
 
 "Message Developer" opens a DM with xe2b, for people who think a blacklist
-was staff abuse. A permanent ban or blacklist also clears any running tempban,
+was staff abuse. Only Gov+ can `/unban` a blacklisted user, and a `/ban` or
+`/tempban` can't overwrite a blacklist. A permanent ban or blacklist also clears any running tempban,
 so the old expiry can't lift it. `/ban`, `/tempban` and `/blacklist` work on
 users who aren't in the server.
 
@@ -70,9 +71,11 @@ button:
    withdraws the vote; pressing the other switches it. The embed shows who
    voted which way.
 5. Once **`APPEAL_MIN_VOTES` (default 3)** votes are in, the majority wins; a
-   tie waits for one more vote. Approved → unbanned, case logged, DM with a
-   one-use rejoin invite. Denied → DM with when they can try again. The result
-   is posted in the alert channel too.
+   tie waits for one more vote. The user is DMed **"The FJUSA Ban Team has
+   reviewed your case and approved/denied your appeal"** (`APPEAL_TEAM_NAME`).
+   Approved: they're unbanned, a case is logged, and the DM has a one-use
+   **Rejoin** invite. Denied: the DM says when they can appeal again. The
+   result is also posted in the alert channel.
 
 If the user is blacklisted while their appeal is open, it closes automatically.
 Spam limits: the user must still be banned, only
@@ -117,19 +120,31 @@ make it the bot's avatar, which is where embeds read it from. Alternatively, set
 Each kind of log can go to its own channel, set in `.env` with one channel ID per
 server:
 
-| Variable | What goes there |
-|---|---|
-| `MOD_LOG_CHANNEL_IDS` | Cases, lockdowns, purges |
-| `MESSAGE_LOG_CHANNEL_IDS` | Edited and deleted messages |
-| `MEMBER_LOG_CHANNEL_IDS` | Joins, leaves, role and nickname changes, bans |
-| `VOICE_LOG_CHANNEL_IDS` | Voice joins, moves and leaves |
-| `SERVER_LOG_CHANNEL_IDS` | Channel, role and invite changes |
-| `ALERT_LOG_CHANNEL_IDS` | Raid and alt-account alerts |
+| Log | Variable | What goes there |
+|---|---|---|
+| 🔨 Mod Logs | `MOD_LOGS_CHANNEL_IDS` | Cases, lockdowns, purges |
+| 💬 Chat Logs | `CHAT_LOGS_CHANNEL_IDS` | Edited and deleted messages |
+| 🚪 Join Logs | `JOIN_LOGS_CHANNEL_IDS` | Members joining and leaving |
+| 👤 Member Logs | `MEMBER_LOGS_CHANNEL_IDS` | Role and nickname changes, bans, unbans |
+| 🎧 Voice Logs | `VOICE_LOGS_CHANNEL_IDS` | Voice joins, moves, leaves |
+| 🏗️ Server Logs | `SERVER_LOGS_CHANNEL_IDS` | Channel, role and invite changes |
+| 🛡️ Security Logs | `SECURITY_LOGS_CHANNEL_IDS` | Raid and alt-account alerts |
 
-For each event, the bot uses whichever channel in the list belongs to that server.
-Anything left empty falls back to `/setlogchannel` (moderation) or
-`/setserverlogchannel` (everything else). `/settings` shows where each kind goes,
-and `/testlog` sends a test to all of them.
+For each event, the bot uses whichever channel in the list belongs to that server,
+and tags the entry with its log name. Anything left empty falls back to
+`/setlogchannel` (Mod Logs) or `/setserverlogchannel` (everything else).
+`/settings` shows where each kind goes, and `/testlog` sends a test to all of them.
+
+### System check
+**`/syscheck`** (Dev) checks:
+- your config, the database and the Discord connection
+- that every command loaded, synced and has a tier check
+- the bot's permissions and role position in each server
+- configured roles, log channels, appeals, background tasks and the logo
+
+Every problem gets a preset code with its fix, e.g. `🔴 FJ-PERM-001 Bot is missing
+permissions`. Look one up with `/syscheck code:FJ-PERM-001`, or see the full list in
+[docs/ERROR_CODES.md](docs/ERROR_CODES.md). The same codes appear in the startup logs.
 
 Every action is recorded as a numbered case, posted to the mod-log channel
 (`/setlogchannel`), and DMed to the user where possible.

@@ -4,8 +4,8 @@ Covers: messages (delete/edit/bulk delete), members (join/leave/ban/unban/nickna
 voice state (join/move/leave), channels (create/delete/edit), roles (create/delete/edit),
 and invites (create/delete).
 
-Each event goes to its category's channel - message, member, voice or server - from
-the *_LOG_CHANNEL_IDS env lists, falling back to /setserverlogchannel and then the
+Each event goes to its kind's channel - Chat, Join, Member, Voice or Server Logs -
+from the *_LOGS_CHANNEL_IDS env lists, falling back to /setserverlogchannel and then the
 mod-log channel so a single-channel setup keeps working.
 """
 from __future__ import annotations
@@ -72,7 +72,7 @@ class ServerLogs(commands.Cog):
                 value=_short("\n".join(f"`{a.filename}`" for a in message.attachments)),
                 inline=False,
             )
-        await post_to_server_log_channel(message.guild, embed, "message")
+        await post_to_server_log_channel(message.guild, embed, "chat")
 
     @commands.Cog.listener()
     async def on_bulk_message_delete(self, messages: list[discord.Message]) -> None:
@@ -83,7 +83,7 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Channel", value=messages[0].channel.mention, inline=True)
         embed.add_field(name="User messages removed", value=str(len(non_bot)), inline=True)
         embed.add_field(name="Total removed", value=str(len(messages)), inline=True)
-        await post_to_server_log_channel(messages[0].guild, embed, "message")
+        await post_to_server_log_channel(messages[0].guild, embed, "chat")
 
     @commands.Cog.listener()
     async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
@@ -99,7 +99,7 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Jump", value=f"[View message]({after.jump_url})", inline=True)
         embed.add_field(name="Before", value=_short(before.content, 512), inline=False)
         embed.add_field(name="After", value=_short(after.content, 512), inline=False)
-        await post_to_server_log_channel(before.guild, embed, "message")
+        await post_to_server_log_channel(before.guild, embed, "chat")
 
     # -----------------------------------------------------------------------
     # Members
@@ -126,7 +126,7 @@ class ServerLogs(commands.Cog):
                 value=f"This account is only **{age_days} day(s)** old.",
                 inline=False,
             )
-        await post_to_server_log_channel(member.guild, embed, "member")
+        await post_to_server_log_channel(member.guild, embed, "join")
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
@@ -141,7 +141,7 @@ class ServerLogs(commands.Cog):
             # Unclamped this overflows the 1024-char field limit on role-heavy members,
             # and Discord then rejects the entire embed - losing the log entry outright.
             embed.add_field(name="Roles", value=_short(", ".join(roles)), inline=False)
-        await post_to_server_log_channel(member.guild, embed, "member")
+        await post_to_server_log_channel(member.guild, embed, "join")
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User) -> None:

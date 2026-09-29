@@ -23,6 +23,7 @@ async def db(monkeypatch):
     database._pool = None
     database._closing = False
     await database.connect_database()
+    database._settings_cache.clear()
     await database._execute("DELETE FROM global_blacklist", idempotent=True)
     await database._execute("DELETE FROM guild_settings", idempotent=True)
     await database._execute("DELETE FROM appeals", idempotent=True)

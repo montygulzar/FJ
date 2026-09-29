@@ -249,7 +249,7 @@ class AltDetector(commands.Cog):
         invite_code, inviter = await self._find_used_invite(member.guild)
         score, reasons = _score_member(member, inviter)
         embed = _build_embed(member, score, reasons, invite_code, inviter)
-        await post_to_server_log_channel(member.guild, embed, "alert")
+        await post_to_server_log_channel(member.guild, embed, "security")
 
 
 async def setup(bot: commands.Bot):

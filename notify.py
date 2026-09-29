@@ -10,8 +10,11 @@ from views import link_view
 REJOIN_INVITE_MAX_AGE = 7 * 86400
 
 
-async def rejoin_invite(guild: discord.Guild, reason: str) -> str | None:
-    """A single-use, 7-day invite so someone who was unbanned can find their way back."""
+async def create_invite(
+    guild: discord.Guild, *, reason: str, max_age: int = 86400, max_uses: int = 1, unique: bool = True
+) -> str | None:
+    """An invite from the system channel or the first channel the bot may invite from.
+    Returns None when the bot can't create one anywhere."""
     if guild.me is None:
         return None
     channels = ([guild.system_channel] if guild.system_channel else []) + list(guild.text_channels)
@@ -20,12 +23,17 @@ async def rejoin_invite(guild: discord.Guild, reason: str) -> str | None:
             continue
         try:
             invite = await channel.create_invite(
-                max_age=REJOIN_INVITE_MAX_AGE, max_uses=1, unique=True, reason=reason[:512]
+                max_age=max_age, max_uses=max_uses, unique=unique, reason=reason[:512]
             )
             return invite.url
         except discord.HTTPException:
             continue
     return None
+
+
+async def rejoin_invite(guild: discord.Guild, reason: str) -> str | None:
+    """A single-use, 7-day invite so someone who was unbanned can find their way back."""
+    return await create_invite(guild, reason=reason, max_age=REJOIN_INVITE_MAX_AGE)
 
 
 async def dm_action(

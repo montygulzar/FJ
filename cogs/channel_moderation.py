@@ -16,8 +16,6 @@ from embeds import MUTED_COLOR, NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, build_
 from guards import has_tier
 from modlog import post_to_log_channel
 
-MAX_SLOWMODE_SECONDS = 21600  # Discord's own cap: 6 hours
-MAX_PURGE_MESSAGES = 100
 
 TRISTATE_TO_TEXT = {True: "true", False: "false", None: "none"}
 TEXT_TO_TRISTATE = {"true": True, "false": False, "none": None}

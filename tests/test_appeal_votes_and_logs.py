@@ -66,11 +66,11 @@ class TestLogRouting:
 
     def test_picks_the_channel_in_this_server(self):
         import modlog
-        routes = {"message": [111, 222], "mod": []}
+        routes = {"chat": [111, 222], "mod": []}
         with patch.dict(modlog.LOG_CHANNEL_IDS, routes):
-            assert modlog.env_log_channel_id(self._guild({222}), "message") == 222
-            assert modlog.env_log_channel_id(self._guild({111}), "message") == 111
-            assert modlog.env_log_channel_id(self._guild({999}), "message") is None
+            assert modlog.env_log_channel_id(self._guild({222}), "chat") == 222
+            assert modlog.env_log_channel_id(self._guild({111}), "chat") == 111
+            assert modlog.env_log_channel_id(self._guild({999}), "chat") is None
             assert modlog.env_log_channel_id(self._guild({111}), "mod") is None
 
     @pytest.mark.asyncio
@@ -81,16 +81,48 @@ class TestLogRouting:
         async def fake_settings(guild_id):
             return settings
 
-        with patch.dict(modlog.LOG_CHANNEL_IDS, {"message": [], "mod": []}), \
+        with patch.dict(modlog.LOG_CHANNEL_IDS, {"chat": [], "mod": []}), \
              patch("modlog.get_guild_settings", fake_settings):
             guild = self._guild(set())
             assert await modlog.resolve_log_channel_id(guild, "mod") == 5
-            assert await modlog.resolve_log_channel_id(guild, "message") == 5  # server-log unset -> mod-log
+            assert await modlog.resolve_log_channel_id(guild, "chat") == 5  # server-log unset -> mod-log
             settings["server_log_channel_id"] = 6
-            assert await modlog.resolve_log_channel_id(guild, "message") == 6
+            assert await modlog.resolve_log_channel_id(guild, "chat") == 6
 
     @pytest.mark.asyncio
     async def test_unknown_category_rejected(self):
         import modlog
         with pytest.raises(ValueError):
             await modlog.post_log(self._guild(set()), "nonsense", None)
+
+
+def test_every_error_code_is_documented():
+    from pathlib import Path
+    from error_codes import CODES
+
+    docs = (Path(__file__).resolve().parent.parent / "docs" / "ERROR_CODES.md").read_text()
+    missing = [code for code in CODES if f"`{code}`" not in docs]
+    assert not missing, f"Add these to docs/ERROR_CODES.md: {missing}"
+
+
+def test_syscheck_config_codes():
+    from types import SimpleNamespace
+    import syscheck
+
+    cfg = SimpleNamespace(
+        OWNER_IDS=set(), STAFF_ROLE_IDS={1}, STAFF_DIRECTOR_ROLE_IDS=set(), GOV_ROLE_IDS=set(),
+        LEAVE_UNAPPROVED_GUILDS=True, APPROVED_GUILD_IDS=set(), PROTECTED_USER_IDS={5}, BLOCKED_USER_IDS={5},
+        GLOBAL_ACTION_EXEMPT_GUILD_IDS=set(), MUTE_ROLE_ID=9, APPEAL_ALERT_CHANNEL_ID=3, APPEALS_CHANNEL_ID=3,
+    )
+    report = syscheck.Report()
+    syscheck.check_config(report, cfg)
+    codes = {finding.code for finding in report.findings}
+    assert codes == {"FJ-CFG-001", "FJ-CFG-003", "FJ-CFG-004", "FJ-CFG-007", "FJ-CFG-008"}
+    assert report.passed == report.checks_run - 5
+
+
+def test_report_rejects_unknown_codes():
+    import syscheck
+
+    with pytest.raises(KeyError):
+        syscheck.Report().check(False, "FJ-NOPE-001")

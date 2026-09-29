@@ -12,8 +12,10 @@ from config import (
     SERVER_DISPLAY_NAME,
 )
 from embeds import DANGER_COLOR, SUCCESS_COLOR, branded, logo_url
+from notify import create_invite
 
 logger = logging.getLogger("modbot.guild_guard")
+
 
 def build_unapproved_notice(*, leaving: bool) -> discord.Embed:
     """What the server itself sees when the bot joins somewhere it isn't approved."""
@@ -36,23 +38,8 @@ def build_unapproved_notice(*, leaving: bool) -> discord.Embed:
 
 
 async def resolve_invite(guild: discord.Guild) -> str | None:
-    """Try to generate a 24-hour invite from the first channel the bot can use."""
-    if guild.me is None:
-        return None
-    for channel in guild.text_channels:
-        if not channel.permissions_for(guild.me).create_instant_invite:
-            continue
-        try:
-            invite = await channel.create_invite(
-                max_age=86400,
-                max_uses=1,
-                unique=True,
-                reason="Unapproved server alert - requested by bot owner",
-            )
-            return invite.url
-        except discord.HTTPException:
-            continue
-    return None
+    """A 24-hour, single-use invite so owners can inspect an unapproved server."""
+    return await create_invite(guild, reason="Unapproved server alert - requested by bot owner")
 
 
 async def post_in_server(guild: discord.Guild, embed: discord.Embed) -> None:

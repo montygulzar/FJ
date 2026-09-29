@@ -33,7 +33,7 @@ class RaidProtection(commands.Cog):
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.add_field(name="Account created", value=discord.utils.format_dt(member.created_at, "R"), inline=True)
         embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
-        await post_to_server_log_channel(member.guild, embed, "alert")
+        await post_to_server_log_channel(member.guild, embed, "security")
 
 
 async def setup(bot: commands.Bot):

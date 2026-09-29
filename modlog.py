@@ -2,9 +2,8 @@ import logging
 from datetime import datetime, timedelta
 
 import discord
-from discord.ext import commands
 
-from config import LOG_CHANNEL_IDS
+from config import LOG_CHANNEL_IDS, LOG_KINDS
 from database import add_case, get_guild_settings
 from embeds import build_case_embed
 
@@ -97,12 +96,25 @@ async def resolve_log_channel_id(guild: discord.Guild, category: str) -> int | N
     return settings.get("server_log_channel_id") or settings.get("log_channel_id")
 
 
+def log_label(category: str) -> str:
+    return LOG_KINDS[category][0]
+
+
 async def post_log(guild: discord.Guild, category: str, embed: discord.Embed) -> None:
     if category not in LOG_CHANNEL_IDS:
         raise ValueError(f"Unknown log category {category!r}")
     channel_id = await resolve_log_channel_id(guild, category)
-    if channel_id is not None:
-        await _send_to_channel(guild, channel_id, embed)
+    if channel_id is None:
+        return
+    # Tag the entry with its kind ("💬 Chat Logs - ...") on a copy: callers often send
+    # the same embed back to the moderator, who doesn't need the tag.
+    tagged = embed.copy()
+    footer = tagged.footer
+    tagged.set_footer(
+        text=f"{log_label(category)}  \u2022  {footer.text}" if footer.text else log_label(category),
+        icon_url=footer.icon_url,
+    )
+    await _send_to_channel(guild, channel_id, tagged)
 
 
 async def post_to_log_channel(guild: discord.Guild, embed: discord.Embed) -> None:
@@ -204,19 +216,6 @@ async def record_case(
     embed, _ = await record_case_full(
         guild, target, moderator, action_type, reason, duration=duration, expires_at=expires_at
     )
-    return embed
-
-
-async def announce_case(
-    ctx: commands.Context,
-    target: discord.abc.User,
-    action_type: str,
-    reason: str,
-    moderator: discord.abc.User | None = None,
-) -> discord.Embed:
-    """record_case, plus the reply in the channel the command was run from."""
-    embed = await record_case(ctx.guild, target, moderator or ctx.author, action_type, reason)
-    await ctx.send(embed=embed)
     return embed
 
 

@@ -5,10 +5,18 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import MUTE_ROLE_ID
-from database import add_temp_ban, get_guild_settings, get_warn_count, remove_temp_ban
+from cogs.appeals import is_final_ban
+from database import (
+    add_temp_ban,
+    get_blacklist_entry,
+    get_guild_settings,
+    get_latest_ban_case,
+    get_warn_count,
+    remove_temp_ban,
+)
 from durations import duration_autocomplete, duration_error, parse_duration
 from embeds import audit_reason, build_ban_dm_embed, build_notice_embed, format_duration
-from guards import has_tier, refusal_reason
+from guards import has_tier, member_tier_index, refusal_reason, tier_index
 from modlog import record_case_full, try_dm
 from notify import dm_action, dm_unban
 from reasons import reason_autocomplete
@@ -48,6 +56,17 @@ def dm_status(delivered: bool) -> str:
 class Moderation(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def is_blacklisted_here(self, guild: discord.Guild, user: discord.abc.User) -> bool:
+        """Whether they're currently banned under a final (blacklist) ban in this server."""
+        latest = await get_latest_ban_case(guild.id, user.id)
+        if not is_final_ban(latest["action_type"] if latest else None, await get_blacklist_entry(user.id) is not None):
+            return False
+        try:
+            await guild.fetch_ban(user)
+        except discord.HTTPException:
+            return False  # Not banned (any more) - nothing to protect.
+        return True
 
     def target_member(self, guild: discord.Guild, user: discord.abc.User) -> discord.abc.User:
         """The Member object when they're in the server (so rank checks apply), else the User."""
@@ -131,6 +150,11 @@ class Moderation(commands.Cog):
         refusal = refusal_reason(ctx.author, target, self.bot.user.id)
         if refusal:
             await refuse(ctx, refusal)
+            return
+        if kind != "blacklist" and await self.is_blacklisted_here(ctx.guild, user):
+            # A ban or tempban on top would quietly make a final blacklist appealable,
+            # or let it expire.
+            await refuse(ctx, f"**{user}** is blacklisted here. A Gov+ member has to `/unban` them first.")
             return
 
         await ctx.defer()
@@ -248,6 +272,14 @@ class Moderation(commands.Cog):
     @has_tier("staff")
     @commands.bot_has_permissions(ban_members=True)
     async def unban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
+        globally_blacklisted = await get_blacklist_entry(user.id) is not None
+        latest = await get_latest_ban_case(ctx.guild.id, user.id)
+        is_final = is_final_ban(latest["action_type"] if latest else None, globally_blacklisted)
+        actual = member_tier_index(ctx.author)
+        if is_final and (actual is None or actual < tier_index("gov")):
+            await refuse(ctx, f"**{user}** is under a blacklist ban - only **Gov+** can lift it.")
+            return
+
         await ctx.defer()
         try:
             await ctx.guild.unban(user, reason=audit_reason(ctx.author, "Unban", reason))
@@ -262,6 +294,12 @@ class Moderation(commands.Cog):
         embed, case_id = await record_case_full(ctx.guild, user, ctx.author, "unban", reason)
         delivered = await dm_unban(user, ctx.guild, reason, case_id=case_id)
         embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        if globally_blacklisted:
+            embed.add_field(
+                name="\u26A0\uFE0F Still globally blacklisted",
+                value="They'll be banned again if they rejoin. Use `/globalunban` to lift it everywhere.",
+                inline=False,
+            )
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="warn", description="Warn a member")
