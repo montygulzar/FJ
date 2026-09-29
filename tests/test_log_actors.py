@@ -63,27 +63,51 @@ def test_who_formats_name_and_id():
     assert server_logs.who(None) == "*Someone*"
 
 
-@pytest.mark.asyncio
-async def test_role_log_sentence():
+async def _role_given_embed(permissions):
     giver, recipient = _user(55455, "xe2b"), _user(564, "hf0u")
-    role = SimpleNamespace(mention="<@&7>", id=7)
+    role = SimpleNamespace(mention="<@&7>", id=7, permissions=permissions)
     guild = _guild([_entry(564, giver)])
     guild.default_role = object()
-    before = SimpleNamespace(guild=guild, nick=None, roles=[], id=564)
-    after = SimpleNamespace(
+    before = _User(guild=guild, nick=None, roles=[], id=564, name="hf0u")
+    after = _User(
         guild=guild, nick=None, roles=[role], id=564, mention="<@564>", name="hf0u",
-        display_avatar=recipient.display_avatar, __str__=lambda self: "hf0u",
+        display_avatar=recipient.display_avatar,
     )
-    after = _User(**vars(after))
     posted = []
 
-    async def capture(guild, embed, category):
-        posted.append((category, embed))
+    async def capture(guild, embed, category, view=None):
+        posted.append((category, embed, view))
 
     with patch.object(server_logs, "post_to_server_log_channel", capture):
         await server_logs.ServerLogs(None).on_member_update(before, after)
+    return posted[0]
 
-    category, embed = posted[0]
+
+@pytest.mark.asyncio
+async def test_role_given_log_reads_like_quark():
+    category, embed, view = await _role_given_embed(discord.Permissions.none())
     assert category == "member"
-    assert embed.description == "**xe2b** (ID `55455`) gave <@&7> to **hf0u** (ID `564`)"
-    assert any(field.name == "Given by" for field in embed.fields)
+    assert "Role Given" in embed.title
+    assert embed.author.name == "hf0u"
+    assert embed.description == "The <@&7> role was given to <@564>\n\n**Given by**: <@55455> (`55455`)"
+    assert embed.footer.text == "ID: 564"
+    assert view.children[0].item.label == "User ID"
+
+
+@pytest.mark.asyncio
+async def test_dangerous_role_gets_a_warning():
+    _, embed, _ = await _role_given_embed(discord.Permissions(administrator=True, ban_members=True))
+    assert "**WARNING!**" in embed.description
+    assert "- Dangerous permissions granted: Administrator, Ban Members" in embed.description
+
+
+@pytest.mark.asyncio
+async def test_user_id_button_replies_with_the_bare_id():
+    sent = []
+
+    async def send_message(content, ephemeral):
+        sent.append((content, ephemeral))
+
+    interaction = SimpleNamespace(response=SimpleNamespace(send_message=send_message))
+    await server_logs.UserIdButton(564).callback(interaction)
+    assert sent == [("564", True)]

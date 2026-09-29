@@ -52,12 +52,17 @@ async def _resolve_channel(guild: discord.Guild, channel_id: int) -> discord.abc
     return channel
 
 
-async def _send_to_channel(guild: discord.Guild, channel_id: int, embed: discord.Embed) -> None:
+async def _send_to_channel(
+    guild: discord.Guild, channel_id: int, embed: discord.Embed, view: discord.ui.View | None = None
+) -> None:
     channel = await _resolve_channel(guild, channel_id)
     if channel is None:
         return
     try:
-        await channel.send(embed=embed)
+        if view is not None:
+            await channel.send(embed=embed, view=view)
+        else:
+            await channel.send(embed=embed)
     except discord.Forbidden:
         logger.warning(
             "Missing Send Messages or Embed Links in log channel %s in guild %s (%s)",
@@ -100,7 +105,9 @@ def log_label(category: str) -> str:
     return LOG_KINDS[category][0]
 
 
-async def post_log(guild: discord.Guild, category: str, embed: discord.Embed) -> None:
+async def post_log(
+    guild: discord.Guild, category: str, embed: discord.Embed, view: discord.ui.View | None = None
+) -> None:
     if category not in LOG_CHANNEL_IDS:
         raise ValueError(f"Unknown log category {category!r}")
     channel_id = await resolve_log_channel_id(guild, category)
@@ -114,7 +121,7 @@ async def post_log(guild: discord.Guild, category: str, embed: discord.Embed) ->
         text=f"{log_label(category)}  \u2022  {footer.text}" if footer.text else log_label(category),
         icon_url=footer.icon_url,
     )
-    await _send_to_channel(guild, channel_id, tagged)
+    await _send_to_channel(guild, channel_id, tagged, view)
 
 
 async def post_to_log_channel(guild: discord.Guild, embed: discord.Embed) -> None:
@@ -122,9 +129,11 @@ async def post_to_log_channel(guild: discord.Guild, embed: discord.Embed) -> Non
     await post_log(guild, "mod", embed)
 
 
-async def post_to_server_log_channel(guild: discord.Guild, embed: discord.Embed, category: str = "server") -> None:
+async def post_to_server_log_channel(
+    guild: discord.Guild, embed: discord.Embed, category: str = "server", view: discord.ui.View | None = None
+) -> None:
     """Post a server event to its category's log channel (see LOG_CHANNEL_IDS)."""
-    await post_log(guild, category, embed)
+    await post_log(guild, category, embed, view)
 
 
 async def check_log_channel(guild: discord.Guild) -> tuple[bool, str]:
