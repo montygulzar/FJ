@@ -13,7 +13,23 @@ from database import (
 )
 from embeds import NEUTRAL_COLOR, base_embed, build_notice_embed
 from guards import has_tier
-from modlog import _resolve_channel, check_log_channel, check_server_log_channel
+from modlog import (
+    LOG_CATEGORIES,
+    _resolve_channel,
+    check_log_channel,
+    check_server_log_channel,
+    env_log_channel_id,
+    resolve_log_channel_id,
+)
+
+LOG_LABELS = {
+    "mod": "Moderation",
+    "message": "Messages",
+    "member": "Members",
+    "voice": "Voice",
+    "server": "Server",
+    "alert": "Alerts",
+}
 
 MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap on a timeout: 28 days
 
@@ -43,11 +59,6 @@ class Settings(commands.Cog):
         mute_minutes = config["warn_mute_minutes"]
 
         mod_log_display = await _channel_display(ctx.guild, config["log_channel_id"])
-        server_log_id = config.get("server_log_channel_id")
-        if server_log_id:
-            server_log_display = await _channel_display(ctx.guild, server_log_id)
-        else:
-            server_log_display = f"{mod_log_display} *(same as mod-log)*"
         announce_id = config.get("announce_channel_id")
         if announce_id:
             announce_display = await _channel_display(ctx.guild, announce_id)
@@ -62,9 +73,13 @@ class Settings(commands.Cog):
         )
 
         embed = base_embed(f"Settings  \u2022  {ctx.guild.name}", NEUTRAL_COLOR)
-        embed.add_field(name="Mod-log channel", value=mod_log_display, inline=True)
-        embed.add_field(name="Server-log channel", value=server_log_display, inline=True)
         embed.add_field(name="Announcement channel", value=announce_display, inline=True)
+        routing = []
+        for category in LOG_CATEGORIES:
+            channel_id = await resolve_log_channel_id(ctx.guild, category)
+            source = " *(env)*" if env_log_channel_id(ctx.guild, category) else ""
+            routing.append(f"**{LOG_LABELS[category]}**: {await _channel_display(ctx.guild, channel_id)}{source}")
+        embed.add_field(name="\U0001F4DC  Log routing", value="\n".join(routing), inline=False)
         embed.add_field(name="Lockdown roles", value=lockdown_value, inline=False)
         embed.add_field(
             name="Raid protection",
@@ -137,52 +152,28 @@ class Settings(commands.Cog):
             return
         await ctx.send(embed=build_notice_embed(f"Global announcements will post in {channel.mention}."))
 
-    @commands.hybrid_command(name="testlog", description="Send a test message to the configured mod-log channel")
+    @commands.hybrid_command(name="testlog", description="Send a test message to every log channel")
     @commands.guild_only()
     @has_tier("gov")
     async def testlog(self, ctx: commands.Context):
-        ok, detail = await check_log_channel(ctx.guild)
-        if not ok:
-            await ctx.send(embed=build_notice_embed(detail, success=False))
-            return
-
-        config = await get_guild_settings(ctx.guild.id)
-        channel = await _resolve_channel(ctx.guild, config["log_channel_id"])
-        if channel is None:
-            await ctx.send(embed=build_notice_embed("Could not resolve the log channel. Try /setlogchannel again.", success=False))
-            return
-
-        try:
-            await channel.send(embed=base_embed("Test Message", NEUTRAL_COLOR, "If you can see this, mod-log is working."))
-        except discord.HTTPException as error:
-            await ctx.send(embed=build_notice_embed(f"Channel looked reachable, but sending failed: `{error}`", success=False))
-            return
-
-        await ctx.send(embed=build_notice_embed(f"Test message sent to {channel.mention}."))
-
-    @commands.hybrid_command(name="testserverlog", description="Send a test message to the server-log channel")
-    @commands.guild_only()
-    @has_tier("gov")
-    async def testserverlog(self, ctx: commands.Context):
-        ok, detail = await check_server_log_channel(ctx.guild)
-        if not ok:
-            await ctx.send(embed=build_notice_embed(detail, success=False))
-            return
-
-        config = await get_guild_settings(ctx.guild.id)
-        channel_id = config.get("server_log_channel_id") or config.get("log_channel_id")
-        channel = await _resolve_channel(ctx.guild, channel_id)
-        if channel is None:
-            await ctx.send(embed=build_notice_embed("Could not resolve the server-log channel.", success=False))
-            return
-
-        try:
-            await channel.send(embed=base_embed("Test Message", NEUTRAL_COLOR, "If you can see this, server-log is working."))
-        except discord.HTTPException as error:
-            await ctx.send(embed=build_notice_embed(f"Sending failed: `{error}`", success=False))
-            return
-
-        await ctx.send(embed=build_notice_embed(f"Test message sent to {channel.mention}."))
+        await ctx.defer()
+        lines = []
+        for category in LOG_CATEGORIES:
+            label = LOG_LABELS[category]
+            channel_id = await resolve_log_channel_id(ctx.guild, category)
+            channel = await _resolve_channel(ctx.guild, channel_id) if channel_id else None
+            if channel is None:
+                lines.append(f"\U0001F534 **{label}** - no channel set")
+                continue
+            try:
+                await channel.send(embed=base_embed(
+                    f"\U0001F9EA  Test - {label} log", NEUTRAL_COLOR,
+                    f"If you can see this, **{label.lower()}** logs arrive here.",
+                ))
+                lines.append(f"\U0001F7E2 **{label}** - {channel.mention}")
+            except discord.HTTPException as error:
+                lines.append(f"\U0001F534 **{label}** - {channel.mention} (`{error}`)")
+        await ctx.send(embed=base_embed("\U0001F9EA  Log test", NEUTRAL_COLOR, "\n".join(lines)))
 
     @commands.hybrid_command(
         name="setraidprotection",

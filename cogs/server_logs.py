@@ -1,19 +1,19 @@
-"""Full server event logging - mirrors Sapphire's audit log output.
+"""Full server event logging - clean, categorised audit logging.
 
 Covers: messages (delete/edit/bulk delete), members (join/leave/ban/unban/nickname/roles),
 voice state (join/move/leave), channels (create/delete/edit), roles (create/delete/edit),
 and invites (create/delete).
 
-Uses post_to_server_log_channel which routes to the guild's dedicated server-log channel
-if configured, falling back to the mod-log channel so existing setups keep working.
+Each event goes to its category's channel - message, member, voice or server - from
+the *_LOG_CHANNEL_IDS env lists, falling back to /setserverlogchannel and then the
+mod-log channel so a single-channel setup keeps working.
 """
 from __future__ import annotations
 
 import discord
 from discord.ext import commands
 
-import embeds as embeds_module
-from config import BRAND_NAME
+from embeds import base_embed, branded
 from modlog import post_to_server_log_channel
 
 COLOR_JOIN     = 0x3BA55D
@@ -30,19 +30,13 @@ COLOR_NICKNAME = 0xFEE75C
 
 
 def _base(title: str, color: int, description: str | None = None) -> discord.Embed:
-    embed = discord.Embed(
-        title=title,
-        description=description,
-        color=color,
-        timestamp=discord.utils.utcnow(),
-    )
-    embed.set_footer(text=BRAND_NAME, icon_url=embeds_module.BRAND_ICON_URL)
-    return embed
+    return base_embed(title, color, description)
 
 
 def _author(embed: discord.Embed, user: discord.abc.User | discord.Member) -> discord.Embed:
+    """Who the event is about, with their ID in the footer so it can be searched for."""
     embed.set_author(name=str(user), icon_url=user.display_avatar.url)
-    return embed
+    return branded(embed, footer_prefix=f"User ID {user.id}")
 
 
 def _short(text: str | None, limit: int = 1024) -> str:
@@ -78,7 +72,7 @@ class ServerLogs(commands.Cog):
                 value=_short("\n".join(f"`{a.filename}`" for a in message.attachments)),
                 inline=False,
             )
-        await post_to_server_log_channel(message.guild, embed)
+        await post_to_server_log_channel(message.guild, embed, "message")
 
     @commands.Cog.listener()
     async def on_bulk_message_delete(self, messages: list[discord.Message]) -> None:
@@ -89,7 +83,7 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Channel", value=messages[0].channel.mention, inline=True)
         embed.add_field(name="User messages removed", value=str(len(non_bot)), inline=True)
         embed.add_field(name="Total removed", value=str(len(messages)), inline=True)
-        await post_to_server_log_channel(messages[0].guild, embed)
+        await post_to_server_log_channel(messages[0].guild, embed, "message")
 
     @commands.Cog.listener()
     async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
@@ -105,7 +99,7 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Jump", value=f"[View message]({after.jump_url})", inline=True)
         embed.add_field(name="Before", value=_short(before.content, 512), inline=False)
         embed.add_field(name="After", value=_short(after.content, 512), inline=False)
-        await post_to_server_log_channel(before.guild, embed)
+        await post_to_server_log_channel(before.guild, embed, "message")
 
     # -----------------------------------------------------------------------
     # Members
@@ -132,7 +126,7 @@ class ServerLogs(commands.Cog):
                 value=f"This account is only **{age_days} day(s)** old.",
                 inline=False,
             )
-        await post_to_server_log_channel(member.guild, embed)
+        await post_to_server_log_channel(member.guild, embed, "member")
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
@@ -147,7 +141,7 @@ class ServerLogs(commands.Cog):
             # Unclamped this overflows the 1024-char field limit on role-heavy members,
             # and Discord then rejects the entire embed - losing the log entry outright.
             embed.add_field(name="Roles", value=_short(", ".join(roles)), inline=False)
-        await post_to_server_log_channel(member.guild, embed)
+        await post_to_server_log_channel(member.guild, embed, "member")
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User) -> None:
@@ -160,7 +154,7 @@ class ServerLogs(commands.Cog):
             embed.add_field(name="Banned by", value=moderator.mention, inline=True)
         if reason:
             embed.add_field(name="Reason", value=_short(reason), inline=False)
-        await post_to_server_log_channel(guild, embed)
+        await post_to_server_log_channel(guild, embed, "member")
 
     @commands.Cog.listener()
     async def on_member_unban(self, guild: discord.Guild, user: discord.User) -> None:
@@ -173,7 +167,7 @@ class ServerLogs(commands.Cog):
             embed.add_field(name="Unbanned by", value=moderator.mention, inline=True)
         if reason:
             embed.add_field(name="Reason", value=_short(reason), inline=False)
-        await post_to_server_log_channel(guild, embed)
+        await post_to_server_log_channel(guild, embed, "member")
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
@@ -185,7 +179,7 @@ class ServerLogs(commands.Cog):
             embed.add_field(name="User", value=f"{after.mention}\n`{after.id}`", inline=True)
             embed.add_field(name="Before", value=before.nick or "*none*", inline=True)
             embed.add_field(name="After", value=after.nick or "*none*", inline=True)
-            await post_to_server_log_channel(guild, embed)
+            await post_to_server_log_channel(guild, embed, "member")
 
         added = [r for r in after.roles if r not in before.roles and r != guild.default_role]
         removed = [r for r in before.roles if r not in after.roles and r != guild.default_role]
@@ -197,7 +191,7 @@ class ServerLogs(commands.Cog):
                 embed.add_field(name="Added", value=_short(", ".join(r.mention for r in added)), inline=False)
             if removed:
                 embed.add_field(name="Removed", value=_short(", ".join(r.mention for r in removed)), inline=False)
-            await post_to_server_log_channel(guild, embed)
+            await post_to_server_log_channel(guild, embed, "member")
 
     # -----------------------------------------------------------------------
     # Voice
@@ -228,7 +222,7 @@ class ServerLogs(commands.Cog):
             embed.add_field(name="To", value=after.channel.mention, inline=True)
 
         _author(embed, member)
-        await post_to_server_log_channel(member.guild, embed)
+        await post_to_server_log_channel(member.guild, embed, "voice")
 
     # -----------------------------------------------------------------------
     # Channels
@@ -241,7 +235,7 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Type", value=str(channel.type).replace("_", " ").title(), inline=True)
         if hasattr(channel, "category") and channel.category:
             embed.add_field(name="Category", value=channel.category.name, inline=True)
-        await post_to_server_log_channel(channel.guild, embed)
+        await post_to_server_log_channel(channel.guild, embed, "server")
 
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
@@ -251,7 +245,7 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="ID", value=f"`{channel.id}`", inline=True)
         if hasattr(channel, "category") and channel.category:
             embed.add_field(name="Category", value=channel.category.name, inline=True)
-        await post_to_server_log_channel(channel.guild, embed)
+        await post_to_server_log_channel(channel.guild, embed, "server")
 
     @commands.Cog.listener()
     async def on_guild_channel_update(
@@ -274,8 +268,8 @@ class ServerLogs(commands.Cog):
         embed = _base("\u270F  Channel Updated", COLOR_CHANNEL)
         embed.add_field(name="Channel", value=after.mention, inline=False)
         for name, old, new in changes:
-            embed.add_field(name=name, value=f"{old} - {new}", inline=False)
-        await post_to_server_log_channel(after.guild, embed)
+            embed.add_field(name=name, value=f"{old} \u2192 {new}", inline=False)
+        await post_to_server_log_channel(after.guild, embed, "server")
 
     # -----------------------------------------------------------------------
     # Roles
@@ -287,7 +281,7 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Name", value=role.mention, inline=True)
         embed.add_field(name="Color", value=str(role.color), inline=True)
         embed.add_field(name="ID", value=f"`{role.id}`", inline=True)
-        await post_to_server_log_channel(role.guild, embed)
+        await post_to_server_log_channel(role.guild, embed, "server")
 
     @commands.Cog.listener()
     async def on_guild_role_delete(self, role: discord.Role) -> None:
@@ -295,7 +289,7 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Name", value=f"@{role.name}", inline=True)
         embed.add_field(name="Color", value=str(role.color), inline=True)
         embed.add_field(name="ID", value=f"`{role.id}`", inline=True)
-        await post_to_server_log_channel(role.guild, embed)
+        await post_to_server_log_channel(role.guild, embed, "server")
 
     @commands.Cog.listener()
     async def on_guild_role_update(self, before: discord.Role, after: discord.Role) -> None:
@@ -314,8 +308,8 @@ class ServerLogs(commands.Cog):
         embed = _base("\U0001F6E1  Role Updated", COLOR_ROLE)
         embed.add_field(name="Role", value=after.mention, inline=False)
         for name, old, new in changes:
-            embed.add_field(name=name, value=f"{old} - {new}", inline=False)
-        await post_to_server_log_channel(after.guild, embed)
+            embed.add_field(name=name, value=f"{old} \u2192 {new}", inline=False)
+        await post_to_server_log_channel(after.guild, embed, "server")
 
     # -----------------------------------------------------------------------
     # Invites
@@ -333,7 +327,7 @@ class ServerLogs(commands.Cog):
             embed.add_field(name="Channel", value=invite.channel.mention, inline=True)
         embed.add_field(name="Expires", value="Never" if invite.max_age == 0 else f"{invite.max_age // 3600}h", inline=True)
         embed.add_field(name="Max uses", value="Unlimited" if invite.max_uses == 0 else str(invite.max_uses), inline=True)
-        await post_to_server_log_channel(invite.guild, embed)
+        await post_to_server_log_channel(invite.guild, embed, "server")
 
     @commands.Cog.listener()
     async def on_invite_delete(self, invite: discord.Invite) -> None:
@@ -343,7 +337,7 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Code", value=invite.code, inline=True)
         if invite.channel:
             embed.add_field(name="Channel", value=invite.channel.mention, inline=True)
-        await post_to_server_log_channel(invite.guild, embed)
+        await post_to_server_log_channel(invite.guild, embed, "server")
 
 
 # ---------------------------------------------------------------------------

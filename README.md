@@ -17,8 +17,8 @@ Dev is **user IDs**. `OWNER_IDS` bypass everything.
 | Tier | `.env` variable | Commands |
 |---|---|---|
 | **Staff** | `STAFF_ROLE_IDS` | `warn` `mute` `tempmute` `unmute` `kick` `tempban` `unban` `cases` `casesearch` `purge` `slowmode` `userinfo` + right-click **User Profile** |
-| **Staff Director** | `STAFF_DIRECTOR_ROLE_IDS` | + `ban` `caseedit` `casedelete` `caseexport` `modstats` `lockdown` `unlock` `addlockdownrole` `removelockdownrole` `clearlockdownroles` + **Accept/Deny appeals** |
-| **Gov** | `GOV_ROLE_IDS` | + `blacklist` `globalban` `globalunban` `globalkick` `globalmute` `globalunmute` `globalblacklist list/add/remove/check` `globalannounce` `globallockdown` `globalunlock` `settings` `setlogchannel` `setserverlogchannel` `setannouncechannel` `testlog` `testserverlog` `setraidprotection` `setwarnthresholds` `backupserver` `restorebackup` |
+| **Staff Director** | `STAFF_DIRECTOR_ROLE_IDS` | + `ban` `caseedit` `casedelete` `caseexport` `modstats` `lockdown` `unlock` `addlockdownrole` `removelockdownrole` `clearlockdownroles` + **appeal votes** (default voters) |
+| **Gov** | `GOV_ROLE_IDS` | + `blacklist` `globalban` `globalunban` `globalkick` `globalmute` `globalunmute` `globalblacklist list/add/remove/check` `globalannounce` `globallockdown` `globalunlock` `settings` `setlogchannel` `setserverlogchannel` `setannouncechannel` `testlog` `setraidprotection` `setwarnthresholds` `backupserver` `restorebackup` |
 | **Dev** | `DEV_USER_IDS` | + `debug` `health` `servers` `addrole` `setlogo` |
 
 Anyone can run `/help`.
@@ -63,11 +63,19 @@ button:
 2. The appeal is posted in the appeals channel. The bot fills in their real user
    ID, account age (new accounts are flagged), previous appeals, case count, the
    ban reason and the ban type, so none of it can be faked on the form.
-3. Staff Director+ press 🟢 **Accept** (unbans them, logs a case, DMs them a
-   one-use rejoin invite) or 🔴 **Deny** (optional note, DMs them).
+3. `APPEAL_ALERT_CHANNEL_ID` gets **"A ban appeal has been sent to #appeals"**
+   with a jump link, pinging the voter roles (`APPEAL_PING_VOTERS`).
+4. Members with `APPEAL_VOTER_ROLE_IDS` (default Staff Director+) press
+   🟢 **Approve unban** or 🔴 **Deny unban**. Pressing the same button again
+   withdraws the vote; pressing the other switches it. The embed shows who
+   voted which way.
+5. Once **`APPEAL_MIN_VOTES` (default 3)** votes are in, the majority wins; a
+   tie waits for one more vote. Approved → unbanned, case logged, DM with a
+   one-use rejoin invite. Denied → DM with when they can try again. The result
+   is posted in the alert channel too.
 
-Only the first decision counts. An appeal can't be accepted if the user has been
-blacklisted since they sent it. Spam limits: the user must still be banned, only
+If the user is blacklisted while their appeal is open, it closes automatically.
+Spam limits: the user must still be banned, only
 one open appeal per ban, and a cooldown after a denial (`APPEAL_COOLDOWN_DAYS`).
 
 ### What the user is told
@@ -104,6 +112,24 @@ The FJUSA logo (`assets/fjusa-logo.png`) sits in the corner of DMs, `/help` and
 announcements, and in the footer of every embed. Run **`/setlogo`** once (Dev) to
 make it the bot's avatar, which is where embeds read it from. Alternatively, set
 `LOGO_URL` to a hosted copy.
+
+### Logs
+Each kind of log can go to its own channel, set in `.env` with one channel ID per
+server:
+
+| Variable | What goes there |
+|---|---|
+| `MOD_LOG_CHANNEL_IDS` | Cases, lockdowns, purges |
+| `MESSAGE_LOG_CHANNEL_IDS` | Edited and deleted messages |
+| `MEMBER_LOG_CHANNEL_IDS` | Joins, leaves, role and nickname changes, bans |
+| `VOICE_LOG_CHANNEL_IDS` | Voice joins, moves and leaves |
+| `SERVER_LOG_CHANNEL_IDS` | Channel, role and invite changes |
+| `ALERT_LOG_CHANNEL_IDS` | Raid and alt-account alerts |
+
+For each event, the bot uses whichever channel in the list belongs to that server.
+Anything left empty falls back to `/setlogchannel` (moderation) or
+`/setserverlogchannel` (everything else). `/settings` shows where each kind goes,
+and `/testlog` sends a test to all of them.
 
 Every action is recorded as a numbered case, posted to the mod-log channel
 (`/setlogchannel`), and DMed to the user where possible.

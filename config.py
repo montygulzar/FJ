@@ -154,6 +154,7 @@ STAFF_ROLE_IDS = _parse_id_list("STAFF_ROLE_IDS")
 STAFF_DIRECTOR_ROLE_IDS = _parse_id_list("STAFF_DIRECTOR_ROLE_IDS")
 GOV_ROLE_IDS = _parse_id_list("GOV_ROLE_IDS")
 DEV_USER_IDS = _parse_id_list("DEV_USER_IDS")
+DEV_ROLE_IDS = _parse_id_list("DEV_ROLE_IDS", "DEVELOPMENT_ROLE_IDS")
 
 # Reasons suggested as you type in /warn, /ban, /mute etc. Separate with |
 REASON_PRESETS = [
@@ -166,11 +167,35 @@ REASON_PRESETS = [
     if reason.strip()
 ]
 
-# Appeals submitted from ban DMs are posted here for Staff Director+ to accept or
-# deny. Leave empty to turn in-Discord appeals off (APPEAL_URL still works).
+# Appeals submitted from ban DMs are posted in APPEALS_CHANNEL_ID, where members
+# with APPEAL_VOTER_ROLE_IDS vote to approve or deny the unban. Leave the channel
+# empty to turn in-Discord appeals off (APPEAL_URL still works).
 APPEALS_CHANNEL_ID = _parse_int("APPEALS_CHANNEL_ID", 0, minimum=0)
+# Where "a ban appeal has been sent" alerts and outcomes are posted (optional).
+APPEAL_ALERT_CHANNEL_ID = _parse_int("APPEAL_ALERT_CHANNEL_ID", 0, minimum=0)
+# Roles allowed to vote. Empty = Staff Director+. Must be roles in the server that
+# holds APPEALS_CHANNEL_ID, since that's where the buttons are pressed.
+APPEAL_VOTER_ROLE_IDS = _parse_id_list("APPEAL_VOTER_ROLE_IDS")
+# Votes needed before a decision; the side with more votes then wins (a tie waits
+# for another vote).
+APPEAL_MIN_VOTES = _parse_int("APPEAL_MIN_VOTES", 3, minimum=1, maximum=25)
+# Mention the voter roles in the alert channel when a new appeal arrives.
+APPEAL_PING_VOTERS = _parse_bool("APPEAL_PING_VOTERS", True)
 # How long someone must wait to appeal again after a denial.
 APPEAL_COOLDOWN_DAYS = _parse_int("APPEAL_COOLDOWN_DAYS", 7, minimum=0, maximum=365)
+
+# --- Log channels -------------------------------------------------------------
+# Each is a comma-separated list of channel IDs, one per server: an event is posted
+# to the channel in the list that belongs to the server it happened in. A category
+# left empty falls back to /setlogchannel (moderation) or /setserverlogchannel.
+LOG_CHANNEL_IDS = {
+    "mod": _parse_id_list("MOD_LOG_CHANNEL_IDS"),          # cases, lockdowns, purges
+    "message": _parse_id_list("MESSAGE_LOG_CHANNEL_IDS"),  # edits and deletes
+    "member": _parse_id_list("MEMBER_LOG_CHANNEL_IDS"),    # joins, leaves, roles, nicknames, bans
+    "voice": _parse_id_list("VOICE_LOG_CHANNEL_IDS"),      # voice joins, moves, leaves
+    "server": _parse_id_list("SERVER_LOG_CHANNEL_IDS"),    # channels, roles, invites
+    "alert": _parse_id_list("ALERT_LOG_CHANNEL_IDS"),      # raid and alt-account alerts
+}
 
 # Role given by /mute and removed by /unmute. /tempmute uses Discord's timeout
 # instead and needs no role. The ID must be the same role in every server, or

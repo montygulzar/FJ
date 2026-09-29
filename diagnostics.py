@@ -95,9 +95,14 @@ def validate_config() -> list[str]:
 
     if not (
         config.STAFF_ROLE_IDS or config.STAFF_DIRECTOR_ROLE_IDS or config.GOV_ROLE_IDS
-        or config.DEV_USER_IDS or config.OWNER_IDS
+        or config.DEV_USER_IDS or config.DEV_ROLE_IDS or config.OWNER_IDS
     ):
         warnings.append("No tier roles or owners are configured - all commands are unreachable.")
+
+    if config.APPEAL_ALERT_CHANNEL_ID and not config.APPEALS_CHANNEL_ID:
+        warnings.append("APPEAL_ALERT_CHANNEL_ID is set but APPEALS_CHANNEL_ID isn't - appeals are off, so no alerts.")
+    if config.APPEALS_CHANNEL_ID and config.APPEALS_CHANNEL_ID == config.APPEAL_ALERT_CHANNEL_ID:
+        warnings.append("APPEAL_ALERT_CHANNEL_ID is the same channel as APPEALS_CHANNEL_ID - alerts would point at themselves.")
 
     if not config.MUTE_ROLE_ID:
         warnings.append("MUTE_ROLE_ID is not set - /mute will refuse; /tempmute still works.")

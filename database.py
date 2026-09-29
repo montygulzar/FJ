@@ -144,6 +144,15 @@ SCHEMA_STATEMENTS = (
         message_id     BIGINT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS appeal_votes (
+        appeal_id  INTEGER NOT NULL,
+        voter_id   BIGINT NOT NULL,
+        approve    BOOLEAN NOT NULL,
+        voted_at   TEXT NOT NULL,
+        PRIMARY KEY (appeal_id, voter_id)
+    )
+    """,
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_appeals_one_open ON appeals (guild_id, user_id) WHERE status = 'pending'",
     "CREATE INDEX IF NOT EXISTS idx_appeals_guild_user ON appeals (guild_id, user_id)",
     # Users banned everywhere, including servers the bot joins later: the join
@@ -701,6 +710,7 @@ async def create_appeal(guild_id: int, user_id: int, answer: str, extra: str | N
 
 async def delete_appeal(appeal_id: int) -> None:
     """Remove an appeal that never reached staff, so it doesn't block a retry."""
+    await _execute("DELETE FROM appeal_votes WHERE appeal_id = $1", appeal_id, idempotent=True)
     await _execute("DELETE FROM appeals WHERE id = $1", appeal_id, idempotent=True)
 
 
@@ -750,6 +760,30 @@ async def decide_appeal(appeal_id: int, status: str, moderator_id: int, note: st
         idempotent=False,
     )
     return updated == 1
+
+
+async def cast_vote(appeal_id: int, voter_id: int, approve: bool | None) -> None:
+    """Record, change, or (approve=None) withdraw someone's vote on an appeal."""
+    if approve is None:
+        await _execute(
+            "DELETE FROM appeal_votes WHERE appeal_id = $1 AND voter_id = $2", appeal_id, voter_id, idempotent=True
+        )
+        return
+    await _execute(
+        """
+        INSERT INTO appeal_votes (appeal_id, voter_id, approve, voted_at)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (appeal_id, voter_id) DO UPDATE SET approve = EXCLUDED.approve, voted_at = EXCLUDED.voted_at
+        """,
+        appeal_id, voter_id, approve, datetime.now(timezone.utc).isoformat(),
+        idempotent=True,
+    )
+
+
+async def get_votes(appeal_id: int) -> list[asyncpg.Record]:
+    return await _fetch_all(
+        "SELECT voter_id, approve FROM appeal_votes WHERE appeal_id = $1 ORDER BY voted_at", appeal_id
+    )
 
 
 async def get_latest_ban_case(guild_id: int, user_id: int) -> asyncpg.Record | None:

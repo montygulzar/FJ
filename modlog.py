@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import discord
 from discord.ext import commands
 
+from config import LOG_CHANNEL_IDS
 from database import add_case, get_guild_settings
 from embeds import build_case_embed
 
@@ -70,26 +71,48 @@ async def _send_to_channel(guild: discord.Guild, channel_id: int, embed: discord
         )
 
 
-async def post_to_log_channel(guild: discord.Guild, embed: discord.Embed) -> None:
-    """Post a moderation case embed to the guild's mod-log channel."""
-    settings = await get_guild_settings(guild.id)
-    channel_id = settings["log_channel_id"]
-    if channel_id is None:
-        return
-    await _send_to_channel(guild, channel_id, embed)
+LOG_CATEGORIES = tuple(LOG_CHANNEL_IDS)
 
 
-async def post_to_server_log_channel(guild: discord.Guild, embed: discord.Embed) -> None:
-    """Post a server event embed to the server-log channel.
+def env_log_channel_id(guild: discord.Guild, category: str) -> int | None:
+    """The channel from <CATEGORY>_LOG_CHANNEL_IDS that lives in this guild, if any.
 
-    Falls back to the main mod-log channel if no separate server-log channel is set,
-    so existing setups that use one channel for everything continue to work.
+    The env lists hold one channel per server, so the right one is whichever the
+    guild actually contains.
     """
+    for channel_id in LOG_CHANNEL_IDS.get(category, ()):
+        if guild.get_channel_or_thread(channel_id) is not None:
+            return channel_id
+    return None
+
+
+async def resolve_log_channel_id(guild: discord.Guild, category: str) -> int | None:
+    """Where a log of this category goes: the env channel, else the /set*logchannel ones."""
+    channel_id = env_log_channel_id(guild, category)
+    if channel_id is not None:
+        return channel_id
     settings = await get_guild_settings(guild.id)
-    channel_id = settings.get("server_log_channel_id") or settings.get("log_channel_id")
-    if channel_id is None:
-        return
-    await _send_to_channel(guild, channel_id, embed)
+    if category == "mod":
+        return settings["log_channel_id"]
+    return settings.get("server_log_channel_id") or settings.get("log_channel_id")
+
+
+async def post_log(guild: discord.Guild, category: str, embed: discord.Embed) -> None:
+    if category not in LOG_CHANNEL_IDS:
+        raise ValueError(f"Unknown log category {category!r}")
+    channel_id = await resolve_log_channel_id(guild, category)
+    if channel_id is not None:
+        await _send_to_channel(guild, channel_id, embed)
+
+
+async def post_to_log_channel(guild: discord.Guild, embed: discord.Embed) -> None:
+    """Post a moderation embed (cases, lockdowns, purges) to the moderation log."""
+    await post_log(guild, "mod", embed)
+
+
+async def post_to_server_log_channel(guild: discord.Guild, embed: discord.Embed, category: str = "server") -> None:
+    """Post a server event to its category's log channel (see LOG_CHANNEL_IDS)."""
+    await post_log(guild, category, embed)
 
 
 async def check_log_channel(guild: discord.Guild) -> tuple[bool, str]:

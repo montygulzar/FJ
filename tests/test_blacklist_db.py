@@ -26,6 +26,7 @@ async def db(monkeypatch):
     await database._execute("DELETE FROM global_blacklist", idempotent=True)
     await database._execute("DELETE FROM guild_settings", idempotent=True)
     await database._execute("DELETE FROM appeals", idempotent=True)
+    await database._execute("DELETE FROM appeal_votes", idempotent=True)
     await database._execute("DELETE FROM cases", idempotent=True)
     yield
     await database.close_database()
@@ -110,3 +111,17 @@ async def test_latest_ban_case_and_counts(db):
     # A later blacklist supersedes the tempban - that's what makes it unappealable.
     await database.add_case(9, 1, 50, "blacklist", "four")
     assert (await database.get_latest_ban_case(9, 1))["action_type"] == "blacklist"
+
+
+@pytest.mark.asyncio
+async def test_votes_cast_switch_and_withdraw(db):
+    appeal = await database.create_appeal(9, 1, "please unban me " * 3, None)
+    await database.cast_vote(appeal, 100, True)
+    await database.cast_vote(appeal, 101, False)
+    await database.cast_vote(appeal, 101, True)      # switches, doesn't double count
+    votes = await database.get_votes(appeal)
+    assert {(v["voter_id"], v["approve"]) for v in votes} == {(100, True), (101, True)}
+    await database.cast_vote(appeal, 100, None)      # withdrawn
+    assert [v["voter_id"] for v in await database.get_votes(appeal)] == [101]
+    await database.delete_appeal(appeal)             # votes go with it
+    assert await database.get_votes(appeal) == []

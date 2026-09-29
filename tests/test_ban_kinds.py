@@ -64,3 +64,16 @@ class TestDmText:
     def test_unknown_kind_rejected(self):
         with pytest.raises(ValueError):
             build_ban_dm_embed("x", kind="softban")
+
+
+@pytest.mark.asyncio
+async def test_unreachable_appeals_channel_hides_the_button():
+    """If the appeals channel is missing at startup, DMs mustn't offer a button that can only fail."""
+    import cogs.appeals as appeals
+    from views import BanAppealView
+
+    with patch("cogs.appeals.APPEALS_CHANNEL_ID", 123), patch.object(appeals, "_appeals_channel_ok", False), \
+         patch("views.APPEAL_URL", "https://discord.gg/appeals"):
+        view = BanAppealView(guild_id=5, appealable=True)
+    assert not view.has_appeal_button
+    assert view.children[0].url == "https://discord.gg/appeals"

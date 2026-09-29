@@ -18,8 +18,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-import embeds as embeds_module
-from config import BRAND_NAME
 from embeds import NEUTRAL_COLOR, SUCCESS_COLOR, WARNING_COLOR, base_embed, branded, build_notice_embed, clamp
 from guards import has_tier
 from views import ConfirmView
@@ -226,7 +224,7 @@ class Backup(commands.Cog):
             value="Use `/restorebackup` and attach this JSON file. Missing roles and channels will be recreated.",
             inline=False,
         )
-        embed.set_footer(text=BRAND_NAME, icon_url=embeds_module.BRAND_ICON_URL)
+        branded(embed)
 
         await ctx.send(embed=embed, file=attachment)
 
@@ -306,7 +304,7 @@ class Backup(commands.Cog):
                 value=clamp("\n".join(roles_failed + channels_failed)),
                 inline=False,
             )
-        embed.set_footer(text=BRAND_NAME, icon_url=embeds_module.BRAND_ICON_URL)
+        branded(embed)
         await ctx.send(embed=embed)
 
 

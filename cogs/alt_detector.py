@@ -18,8 +18,7 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands
 
-import embeds as embeds_module
-from config import BRAND_NAME
+from embeds import branded
 from modlog import post_to_server_log_channel
 
 logger = logging.getLogger("modbot.alt_detector")
@@ -129,8 +128,7 @@ def _build_embed(
             value="\n".join(f"- {r}" for r in reasons) if reasons else "None",
             inline=False,
         )
-    embed.set_footer(text=BRAND_NAME, icon_url=embeds_module.BRAND_ICON_URL)
-    return embed
+    return branded(embed)
 
 
 class AltDetector(commands.Cog):
@@ -251,7 +249,7 @@ class AltDetector(commands.Cog):
         invite_code, inviter = await self._find_used_invite(member.guild)
         score, reasons = _score_member(member, inviter)
         embed = _build_embed(member, score, reasons, invite_code, inviter)
-        await post_to_server_log_channel(member.guild, embed)
+        await post_to_server_log_channel(member.guild, embed, "alert")
 
 
 async def setup(bot: commands.Bot):

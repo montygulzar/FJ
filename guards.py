@@ -4,6 +4,7 @@ from discord.ext import commands
 from config import (
     APPROVED_GUILD_IDS,
     BLOCKED_USER_IDS,
+    DEV_ROLE_IDS,
     DEV_USER_IDS,
     GOV_ROLE_IDS,
     OWNER_IDS,
@@ -20,6 +21,7 @@ _TIER_ROLE_IDS: dict[str, set[int]] = {
     "staff": STAFF_ROLE_IDS,
     "staff_director": STAFF_DIRECTOR_ROLE_IDS,
     "gov": GOV_ROLE_IDS,
+    "dev": DEV_ROLE_IDS,
 }
 
 # Tiers checked by user ID instead of role ID.

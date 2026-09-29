@@ -1,4 +1,4 @@
-"""Ban appeals submitted from the bot's DMs and decided by staff with buttons.
+"""Ban appeals submitted from the bot's DMs and decided by a staff vote.
 
 Temporary (/tempban) and permanent (/ban) bans can be appealed: their DMs carry a
 "Submit an appeal" button. Blacklist bans (/blacklist, /globalban, the global
@@ -11,6 +11,13 @@ from what they type, and several limits keep appeals from being spammed:
 - one open appeal per user per server (enforced by a unique index)
 - a cooldown after a denial (APPEAL_COOLDOWN_DAYS)
 
+Appeals land in APPEALS_CHANNEL_ID with "Approve unban" / "Deny unban" buttons.
+Members holding APPEAL_VOTER_ROLE_IDS (default: Staff Director+) vote; pressing the
+same button again withdraws a vote, pressing the other switches it. Once at least
+APPEAL_MIN_VOTES votes are in and one side leads, that side wins. An alert with a
+jump link is posted in APPEAL_ALERT_CHANNEL_ID when an appeal arrives and when it
+is decided.
+
 The buttons are DynamicItems keyed by their custom_id, so they keep working after a
 restart without the bot having to remember any open views.
 """
@@ -20,7 +27,16 @@ from datetime import datetime, timedelta, timezone
 import discord
 from discord.ext import commands
 
-from config import APPEAL_COOLDOWN_DAYS, APPEALS_CHANNEL_ID, DEVELOPER_NAME
+from config import (
+    APPEAL_ALERT_CHANNEL_ID,
+    APPEAL_COOLDOWN_DAYS,
+    APPEAL_MIN_VOTES,
+    APPEAL_PING_VOTERS,
+    APPEAL_VOTER_ROLE_IDS,
+    APPEALS_CHANNEL_ID,
+    DEVELOPER_NAME,
+    OWNER_IDS,
+)
 from database import (
     count_appeals,
     create_appeal,
@@ -33,6 +49,8 @@ from database import (
     get_latest_ban_case,
     get_open_appeal,
     get_temp_ban,
+    get_votes,
+    cast_vote,
     remove_temp_ban,
     set_appeal_message,
 )
@@ -41,7 +59,6 @@ from embeds import (
     NEUTRAL_COLOR,
     SUCCESS_COLOR,
     WARNING_ICON,
-    audit_reason,
     branded,
     build_notice_embed,
     clamp,
@@ -67,18 +84,53 @@ def is_final_ban(latest_ban_action: str | None, globally_blacklisted: bool) -> b
     return globally_blacklisted or latest_ban_action in FINAL_BAN_TYPES
 
 
+# Set on startup once the appeals channel has been checked. When it's missing or
+# unusable, ban DMs fall back to the APPEAL_URL link instead of offering a button
+# that can only fail.
+_appeals_channel_ok: bool | None = None
+
+
 def appeals_enabled() -> bool:
-    return bool(APPEALS_CHANNEL_ID)
+    return bool(APPEALS_CHANNEL_ID) and _appeals_channel_ok is not False
 
 
-async def _appeals_channel(bot: commands.Bot) -> discord.abc.Messageable | None:
-    channel = bot.get_channel(APPEALS_CHANNEL_ID)
+async def _fetch_channel(bot: commands.Bot, channel_id: int) -> discord.abc.GuildChannel | None:
+    if not channel_id:
+        return None
+    channel = bot.get_channel(channel_id)
     if channel is None:
         try:
-            channel = await bot.fetch_channel(APPEALS_CHANNEL_ID)
+            channel = await bot.fetch_channel(channel_id)
         except discord.HTTPException:
             return None
     return channel if isinstance(channel, discord.abc.Messageable) else None
+
+
+async def _appeals_channel(bot: commands.Bot):
+    return await _fetch_channel(bot, APPEALS_CHANNEL_ID)
+
+
+def tally(votes) -> tuple[list[int], list[int]]:
+    """(approver IDs, denier IDs) from vote rows."""
+    return [v["voter_id"] for v in votes if v["approve"]], [v["voter_id"] for v in votes if not v["approve"]]
+
+
+def vote_outcome(approve: int, deny: int, minimum: int = APPEAL_MIN_VOTES) -> str | None:
+    """'accepted' / 'denied' once enough votes are in and one side leads, else None."""
+    if approve + deny < minimum or approve == deny:
+        return None
+    return "accepted" if approve > deny else "denied"
+
+
+def can_vote(member: discord.abc.User) -> bool:
+    if is_blocked(member.id):
+        return False
+    if member.id in OWNER_IDS:
+        return True
+    if APPEAL_VOTER_ROLE_IDS:
+        return any(role.id in APPEAL_VOTER_ROLE_IDS for role in getattr(member, "roles", ()))
+    actual = member_tier_index(member)
+    return actual is not None and actual >= tier_index("staff_director")
 
 
 async def appeal_blocker(bot: commands.Bot, guild_id: int, user: discord.abc.User) -> str | None:
@@ -169,22 +221,161 @@ def build_appeal_embed(
     return branded(embed, footer_prefix=f"Appeal #{appeal_id}")
 
 
-def _decision_view(appeal_id: int) -> discord.ui.View:
+def add_vote_field(embed: discord.Embed, approvers: list[int], deniers: list[int]) -> discord.Embed:
+    """Replace (or add) the live vote tally on the staff copy of an appeal."""
+    for index, field in enumerate(embed.fields):
+        if field.name.startswith("\U0001F5F3"):
+            embed.remove_field(index)
+            break
+    total = len(approvers) + len(deniers)
+    progress = (
+        f"{total}/{APPEAL_MIN_VOTES} votes needed"
+        if total < APPEAL_MIN_VOTES
+        else "Tied - one more vote decides it" if len(approvers) == len(deniers) else "Decided"
+    )
+
+    def names(ids: list[int]) -> str:
+        return ", ".join(f"<@{voter}>" for voter in ids) if ids else "*none*"
+
+    embed.add_field(
+        name="\U0001F5F3\uFE0F  Staff vote",
+        value=clamp(
+            f"\U0001F7E2 **Approve ({len(approvers)})**: {names(approvers)}\n"
+            f"\U0001F534 **Deny ({len(deniers)})**: {names(deniers)}\n"
+            f"*{progress} - majority wins*"
+        ),
+        inline=False,
+    )
+    return embed
+
+
+def vote_view(appeal_id: int, approve: int, deny: int, *, disabled: bool = False) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    view.add_item(AppealDecisionButton(appeal_id, "accept"))
-    view.add_item(AppealDecisionButton(appeal_id, "deny"))
+    view.add_item(AppealVoteButton(appeal_id, "approve", approve, disabled=disabled))
+    view.add_item(AppealVoteButton(appeal_id, "deny", deny, disabled=disabled))
     return view
 
 
-def _stamp_decision(message: discord.Message, accepted: bool, moderator: discord.abc.User, note: str | None) -> discord.Embed:
-    embed = message.embeds[0] if message.embeds else discord.Embed()
+def _stamp_decision(embed: discord.Embed, accepted: bool, approve: int, deny: int, note: str | None) -> discord.Embed:
     embed.color = SUCCESS_COLOR if accepted else DANGER_COLOR
-    outcome = "🟢 Accepted" if accepted else "🔴 Denied"
-    value = f"{outcome} by {moderator.mention} {discord.utils.format_dt(discord.utils.utcnow(), 'R')}"
+    outcome = "\U0001F7E2 **Unban approved**" if accepted else "\U0001F534 **Unban denied**"
+    value = f"{outcome} by staff vote ({approve}-{deny}) {discord.utils.format_dt(discord.utils.utcnow(), 'R')}"
     if note:
-        value += f"\n>>> {clamp(note, 800)}"
+        value += f"\n{note}"
     embed.add_field(name="Decision", value=value, inline=False)
     return embed
+
+
+async def post_appeal_alert(bot, appeal_id: int, user: discord.abc.User, guild, message: discord.Message) -> None:
+    """'A ban appeal has been sent to #appeals' with a jump link, in the alert channel."""
+    channel = await _fetch_channel(bot, APPEAL_ALERT_CHANNEL_ID)
+    if channel is None:
+        return
+    embed = discord.Embed(
+        title=f"\U0001F4E8  New ban appeal #{appeal_id}",
+        description=(
+            f"A ban appeal has been sent to {message.channel.mention}.\n"
+            f"**[Jump to the appeal]({message.jump_url})** to cast your vote."
+        ),
+        color=NEUTRAL_COLOR,
+    )
+    embed.set_thumbnail(url=user.display_avatar.url)
+    embed.add_field(name="User", value=f"{user.mention}\n`{user.id}`", inline=True)
+    embed.add_field(name="Banned from", value=guild.name if guild else "Unknown", inline=True)
+    embed.add_field(name="Votes needed", value=f"{APPEAL_MIN_VOTES}, majority wins", inline=True)
+
+    content, mentions = None, discord.AllowedMentions.none()
+    if APPEAL_PING_VOTERS and APPEAL_VOTER_ROLE_IDS and getattr(channel, "guild", None):
+        roles = [channel.guild.get_role(role_id) for role_id in APPEAL_VOTER_ROLE_IDS]
+        roles = [role for role in roles if role is not None]
+        if roles:
+            content = " ".join(role.mention for role in roles)
+            mentions = discord.AllowedMentions(roles=roles, users=False, everyone=False)
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(label="Go to appeal", style=discord.ButtonStyle.link, url=message.jump_url, emoji="\U0001F517"))
+    try:
+        await channel.send(content=content, embed=branded(embed), view=view, allowed_mentions=mentions)
+    except discord.HTTPException as error:
+        logger.warning("Could not post appeal alert for #%s: %s", appeal_id, error)
+
+
+async def post_decision_alert(bot, appeal_id: int, accepted: bool, approve: int, deny: int, jump_url: str) -> None:
+    channel = await _fetch_channel(bot, APPEAL_ALERT_CHANNEL_ID)
+    if channel is None:
+        return
+    embed = discord.Embed(
+        title=("\U0001F7E2  Appeal #{0} approved" if accepted else "\U0001F534  Appeal #{0} denied").format(appeal_id),
+        description=f"Staff vote finished **{approve}-{deny}**. [View the appeal]({jump_url})",
+        color=SUCCESS_COLOR if accepted else DANGER_COLOR,
+    )
+    try:
+        await channel.send(embed=branded(embed))
+    except discord.HTTPException as error:
+        logger.warning("Could not post decision alert for #%s: %s", appeal_id, error)
+
+
+async def _resolve_user(bot, user_id: int):
+    user = bot.get_user(user_id)
+    if user is None:
+        try:
+            user = await bot.fetch_user(user_id)
+        except discord.HTTPException:
+            return None
+    return user
+
+
+async def carry_out(bot: commands.Bot, appeal, accepted: bool, approve: int, deny: int) -> str | None:
+    """Act on a finished vote: unban or not, record it, DM the user. Returns a note for staff."""
+    guild = bot.get_guild(appeal["guild_id"])
+    user = await _resolve_user(bot, appeal["user_id"])
+    tally_text = f"staff vote {approve}-{deny}"
+
+    if not accepted:
+        if user is not None:
+            dm = discord.Embed(
+                title="\U0001F534  Your appeal was denied",
+                description=(
+                    f"Your appeal (**#{appeal['id']}**) to **{guild.name if guild else 'the server'}** "
+                    f"was denied after a {tally_text}."
+                ),
+                color=DANGER_COLOR,
+            )
+            if guild is not None:
+                dm.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+            if logo_url():
+                dm.set_thumbnail(url=logo_url())
+            if APPEAL_COOLDOWN_DAYS:
+                retry_at = discord.utils.utcnow() + timedelta(days=APPEAL_COOLDOWN_DAYS)
+                dm.add_field(name="Appeal again", value=discord.utils.format_dt(retry_at, "R"), inline=False)
+            await try_dm(user, branded(dm, footer_prefix="Automated notice"))
+        return None
+
+    if guild is None:
+        return "The server is no longer available, so nobody was unbanned."
+
+    reason = f"Appeal #{appeal['id']} approved ({tally_text})"
+    note, unbanned = None, False
+    try:
+        await guild.unban(discord.Object(id=appeal["user_id"]), reason=clamp(reason, 512))
+        unbanned = True
+    except discord.NotFound:
+        note, unbanned = "They were already unbanned.", True
+    except discord.HTTPException as error:
+        note = f"\u26A0\uFE0F Unban failed: `{error}` - unban them manually."
+    if unbanned:
+        # Only once the ban is really gone: dropping the record after a failed unban
+        # would leave a tempban that never expires.
+        await remove_temp_ban(guild.id, appeal["user_id"])
+
+    if unbanned and user is not None:
+        case_id = None
+        if note is None and bot.user is not None:
+            _, case_id = await record_case_full(guild, user, bot.user, "unban", reason)
+        await dm_unban(
+            user, guild, reason, case_id=case_id,
+            note="\U0001F7E2 Your appeal was **approved** by staff. Welcome back - please follow the rules.",
+        )
+    return note
 
 
 class AppealModal(discord.ui.Modal, title="Ban Appeal"):
@@ -237,11 +428,12 @@ class AppealModal(discord.ui.Modal, title="Ban Appeal"):
             case_counts=await get_case_counts_for_user(self.guild_id, user.id),
         )
 
+        add_vote_field(embed, [], [])
         channel = await _appeals_channel(bot)
         message = None
         if channel is not None:
             try:
-                message = await channel.send(embed=embed, view=_decision_view(appeal_id))
+                message = await channel.send(embed=embed, view=vote_view(appeal_id, 0, 0))
             except discord.HTTPException as error:
                 logger.warning("Could not post appeal #%s to channel %s: %s", appeal_id, APPEALS_CHANNEL_ID, error)
         if message is None:
@@ -255,63 +447,13 @@ class AppealModal(discord.ui.Modal, title="Ban Appeal"):
             return
 
         await set_appeal_message(appeal_id, message.id)
+        await post_appeal_alert(bot, appeal_id, user, guild, message)
         confirmation = build_notice_embed(
             f"Your appeal to **{guild.name}** has been sent to staff. "
-            "You'll get a DM from me when they've made a decision.",
+            "Staff will vote on it, and I'll DM you the result.",
             title=f"Appeal #{appeal_id} submitted",
         )
         await interaction.followup.send(embed=confirmation, ephemeral=True)
-
-
-class DenyModal(discord.ui.Modal, title="Deny Appeal"):
-    note = discord.ui.TextInput(
-        label="Reason (sent to the user)",
-        style=discord.TextStyle.paragraph,
-        required=False,
-        max_length=500,
-    )
-
-    def __init__(self, appeal_id: int, message: discord.Message):
-        super().__init__(timeout=300)
-        self.appeal_id = appeal_id
-        self.message = message
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        note = self.note.value or None
-        if not await decide_appeal(self.appeal_id, "denied", interaction.user.id, note):
-            await interaction.response.send_message(
-                embed=build_notice_embed("Someone already decided this appeal.", success=False), ephemeral=True
-            )
-            return
-        await interaction.response.defer(ephemeral=True)
-
-        await self.message.edit(embed=_stamp_decision(self.message, False, interaction.user, note), view=None)
-
-        appeal = await get_appeal(self.appeal_id)
-        guild = interaction.client.get_guild(appeal["guild_id"])
-        retry_at = discord.utils.utcnow() + timedelta(days=APPEAL_COOLDOWN_DAYS)
-        dm = discord.Embed(
-            title="\U0001F534  Your appeal was denied",
-            description=f"Your appeal (**#{self.appeal_id}**) to **{guild.name if guild else 'the server'}** was denied.",
-            color=DANGER_COLOR,
-        )
-        if guild is not None:
-            dm.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
-        if logo_url():
-            dm.set_thumbnail(url=logo_url())
-        if note:
-            dm.add_field(name="Staff note", value=f">>> {clamp(note, 1000)}", inline=False)
-        if APPEAL_COOLDOWN_DAYS:
-            dm.add_field(name="Appeal again", value=discord.utils.format_dt(retry_at, "R"), inline=False)
-        user = interaction.client.get_user(appeal["user_id"])
-        if user is None:
-            try:
-                user = await interaction.client.fetch_user(appeal["user_id"])
-            except discord.HTTPException:
-                user = None
-        if user is not None:
-            await try_dm(user, branded(dm, footer_prefix="Automated notice"))
-        await interaction.followup.send(embed=build_notice_embed(f"Appeal #{self.appeal_id} denied."), ephemeral=True)
 
 
 class AppealButton(discord.ui.DynamicItem[discord.ui.Button], template=r"fjusa:appeal:(?P<guild_id>\d+)"):
@@ -342,36 +484,35 @@ class AppealButton(discord.ui.DynamicItem[discord.ui.Button], template=r"fjusa:a
         await interaction.response.send_modal(AppealModal(self.guild_id))
 
 
-class AppealDecisionButton(
+class AppealVoteButton(
     discord.ui.DynamicItem[discord.ui.Button],
-    template=r"fjusa:appealdecide:(?P<appeal_id>\d+):(?P<action>accept|deny)",
+    template=r"fjusa:appealvote:(?P<appeal_id>\d+):(?P<side>approve|deny)",
 ):
-    """Accept/Deny on the staff copy of an appeal. Staff Director+ only."""
+    """Approve unban / Deny unban on the staff copy of an appeal."""
 
-    def __init__(self, appeal_id: int, action: str):
-        accept = action == "accept"
+    def __init__(self, appeal_id: int, side: str, count: int = 0, *, disabled: bool = False):
+        approve = side == "approve"
         super().__init__(
             discord.ui.Button(
-                label="Accept" if accept else "Deny",
+                label=f"{'Approve unban' if approve else 'Deny unban'} ({count})",
                 style=discord.ButtonStyle.secondary,
-                emoji="🟢" if accept else "🔴",
-                custom_id=f"fjusa:appealdecide:{appeal_id}:{action}",
+                emoji="\U0001F7E2" if approve else "\U0001F534",
+                custom_id=f"fjusa:appealvote:{appeal_id}:{side}",
+                disabled=disabled,
             )
         )
         self.appeal_id = appeal_id
-        self.action = action
+        self.side = side
 
     @classmethod
     async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match):
-        return cls(int(match["appeal_id"]), match["action"])
+        return cls(int(match["appeal_id"]), match["side"])
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        actual = member_tier_index(interaction.user)
-        if is_blocked(interaction.user.id) or actual is None or actual < tier_index("staff_director"):
+        if not can_vote(interaction.user):
+            who = "the appeal voter role" if APPEAL_VOTER_ROLE_IDS else "**Staff Director+**"
             await interaction.response.send_message(
-                embed=build_notice_embed(
-                    "Only users who are **Staff Director+** can decide appeals.", success=False
-                ),
+                embed=build_notice_embed(f"Only members with {who} can vote on appeals.", success=False),
                 ephemeral=True,
             )
             return False
@@ -381,80 +522,64 @@ class AppealDecisionButton(
         appeal = await get_appeal(self.appeal_id)
         if appeal is None or appeal["status"] != "pending":
             await interaction.response.send_message(
-                embed=build_notice_embed("This appeal has already been decided.", success=False), ephemeral=True
+                embed=build_notice_embed("Voting on this appeal has closed.", success=False), ephemeral=True
+            )
+            return
+        if interaction.user.id == appeal["user_id"]:
+            await interaction.response.send_message(
+                embed=build_notice_embed("You can't vote on your own appeal.", success=False), ephemeral=True
             )
             return
 
-        if self.action == "deny":
-            await interaction.response.send_modal(DenyModal(self.appeal_id, interaction.message))
-            return
-
+        # Blacklisted since they appealed: blacklist bans are final, so the vote closes.
         latest = await get_latest_ban_case(appeal["guild_id"], appeal["user_id"])
         if is_final_ban(latest["action_type"] if latest else None, await get_blacklist_entry(appeal["user_id"]) is not None):
-            await interaction.response.send_message(
-                embed=build_notice_embed(
-                    "They've been **blacklisted** since this appeal was sent, so it can't be accepted. "
-                    "Deny it, or lift the blacklist first.",
-                    success=False,
-                ),
-                ephemeral=True,
-            )
+            if await decide_appeal(self.appeal_id, "denied", interaction.user.id, "blacklisted after appealing"):
+                approvers, deniers = tally(await get_votes(self.appeal_id))
+                embed = _stamp_decision(
+                    interaction.message.embeds[0], False, len(approvers), len(deniers),
+                    "\u26D4 Closed automatically: they were **blacklisted** after appealing.",
+                )
+                await interaction.response.edit_message(
+                    embed=embed, view=vote_view(self.appeal_id, len(approvers), len(deniers), disabled=True)
+                )
+            else:
+                await interaction.response.send_message(
+                    embed=build_notice_embed("Voting on this appeal has closed.", success=False), ephemeral=True
+                )
             return
 
-        if not await decide_appeal(self.appeal_id, "accepted", interaction.user.id, None):
+        approve = self.side == "approve"
+        previous = {v["voter_id"]: v["approve"] for v in await get_votes(self.appeal_id)}.get(interaction.user.id)
+        # Same button again withdraws the vote; the other button switches it.
+        new_vote = None if previous is approve else approve
+        await cast_vote(self.appeal_id, interaction.user.id, new_vote)
+
+        approvers, deniers = tally(await get_votes(self.appeal_id))
+        outcome = vote_outcome(len(approvers), len(deniers))
+        embed = add_vote_field(interaction.message.embeds[0], approvers, deniers)
+
+        if outcome is None:
+            await interaction.response.edit_message(embed=embed, view=vote_view(self.appeal_id, len(approvers), len(deniers)))
+            return
+
+        # decide_appeal only succeeds once, so two final votes landing together
+        # can't both carry out the decision.
+        note = f"{len(approvers)}-{len(deniers)}"
+        if not await decide_appeal(self.appeal_id, outcome, interaction.user.id, f"staff vote {note}"):
             await interaction.response.send_message(
-                embed=build_notice_embed("Someone already decided this appeal.", success=False), ephemeral=True
+                embed=build_notice_embed("Voting on this appeal has closed.", success=False), ephemeral=True
             )
             return
         await interaction.response.defer()
-        await self._accept(interaction, appeal)
-
-    async def _accept(self, interaction: discord.Interaction, appeal) -> None:
-        bot = interaction.client
-        moderator = interaction.user
-        guild = bot.get_guild(appeal["guild_id"])
-        user = bot.get_user(appeal["user_id"])
-        if user is None:
-            try:
-                user = await bot.fetch_user(appeal["user_id"])
-            except discord.HTTPException:
-                user = discord.Object(id=appeal["user_id"])
-
-        outcome = None
-        case_id = None
-        unbanned = False
-        if guild is None:
-            outcome = "The server is no longer available, so nobody was unbanned."
-        else:
-            reason = f"Appeal #{self.appeal_id} accepted"
-            try:
-                await guild.unban(user, reason=audit_reason(moderator, "Appeal accepted", reason))
-                unbanned = True
-            except discord.NotFound:
-                outcome = "They were already unbanned."
-                unbanned = True
-            except discord.HTTPException as error:
-                outcome = f"Unban failed: `{error}` - unban them manually."
-            if unbanned:
-                # Only once the ban is really gone: dropping the record after a failed
-                # unban would leave a tempban that never expires.
-                await remove_temp_ban(guild.id, appeal["user_id"])
-            if outcome is None and isinstance(user, discord.abc.User):
-                _, case_id = await record_case_full(guild, user, moderator, "unban", reason)
-
+        accepted = outcome == "accepted"
+        staff_note = await carry_out(interaction.client, appeal, accepted, len(approvers), len(deniers))
+        embed = _stamp_decision(embed, accepted, len(approvers), len(deniers), staff_note)
         await interaction.message.edit(
-            embed=_stamp_decision(interaction.message, True, moderator, outcome), view=None
+            embed=embed, view=vote_view(self.appeal_id, len(approvers), len(deniers), disabled=True)
         )
-
-        if unbanned and isinstance(user, discord.abc.User):
-            await dm_unban(
-                user, guild, f"Appeal #{self.appeal_id} accepted", case_id=case_id,
-                note="\U0001F7E2 Your appeal was **accepted**. Welcome back - please follow the rules.",
-            )
-
-        await interaction.followup.send(
-            embed=build_notice_embed(f"Appeal #{self.appeal_id} accepted." + (f"\n{outcome}" if outcome else "")),
-            ephemeral=True,
+        await post_decision_alert(
+            interaction.client, self.appeal_id, accepted, len(approvers), len(deniers), interaction.message.jump_url
         )
 
 
@@ -464,13 +589,26 @@ class Appeals(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
-        if appeals_enabled() and await _appeals_channel(self.bot) is None:
+        global _appeals_channel_ok
+        if not APPEALS_CHANNEL_ID:
+            return
+        channel = await _appeals_channel(self.bot)
+        _appeals_channel_ok = channel is not None
+        if channel is None:
             logger.warning(
-                "APPEALS_CHANNEL_ID %s is not a channel I can see - appeals will fail to post",
+                "APPEALS_CHANNEL_ID %s is not a channel I can see - appeal buttons are hidden until it is fixed",
                 APPEALS_CHANNEL_ID,
             )
+            return
+        if APPEAL_VOTER_ROLE_IDS and not any(channel.guild.get_role(r) for r in APPEAL_VOTER_ROLE_IDS):
+            logger.warning(
+                "None of APPEAL_VOTER_ROLE_IDS exist in %s, where the appeals channel is - nobody but owners can vote",
+                channel.guild.name,
+            )
+        if APPEAL_ALERT_CHANNEL_ID and await _fetch_channel(self.bot, APPEAL_ALERT_CHANNEL_ID) is None:
+            logger.warning("APPEAL_ALERT_CHANNEL_ID %s is not a channel I can see", APPEAL_ALERT_CHANNEL_ID)
 
 
 async def setup(bot: commands.Bot):
-    bot.add_dynamic_items(AppealButton, AppealDecisionButton)
+    bot.add_dynamic_items(AppealButton, AppealVoteButton)
     await bot.add_cog(Appeals(bot))
