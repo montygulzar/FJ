@@ -68,45 +68,14 @@ def get_command_stats(top: int = 10) -> tuple[list[tuple[str, int]], int, int]:
 # --- Configuration validation --------------------------------------------------
 
 def validate_config() -> list[str]:
-    """Human-readable warnings about the current configuration. An empty list means all clear."""
-    warnings: list[str] = []
+    """Warnings about the .env configuration, each tagged with its /syscheck code.
+    An empty list means all clear."""
+    from error_codes import CODES
+    from syscheck import Report, check_config
 
-    if not config.OWNER_IDS:
-        warnings.append("OWNER_IDS is empty - owner-only commands are unreachable by anyone.")
-
-    if not config.APPROVED_GUILD_IDS:
-        warnings.append("APPROVED_GUILD_IDS is empty - global actions apply to every server this bot is in.")
-
-    if config.LEAVE_UNAPPROVED_GUILDS and not config.APPROVED_GUILD_IDS:
-        warnings.append("LEAVE_UNAPPROVED_GUILDS is on with no APPROVED_GUILD_IDS - the bot will leave everywhere.")
-
-    if not config.COMMAND_PREFIX:
-        warnings.append("COMMAND_PREFIX is empty - prefix commands will not work.")
-
-    overlap = config.PROTECTED_USER_IDS & config.BLOCKED_USER_IDS
-    if overlap:
-        warnings.append(
-            f"{len(overlap)} user(s) are on both PROTECTED_USER_IDS and BLOCKED_USER_IDS - "
-            "they cannot use the bot but also cannot be moderated."
-        )
-
-    if not config.GOV_ROLE_IDS and not config.DEV_USER_IDS and not config.OWNER_IDS:
-        warnings.append("No Gov role, dev or owner is configured - global commands are unreachable.")
-
-    if not (
-        config.STAFF_ROLE_IDS or config.STAFF_DIRECTOR_ROLE_IDS or config.GOV_ROLE_IDS
-        or config.DEV_USER_IDS or config.OWNER_IDS
-    ):
-        warnings.append("No tier roles or owners are configured - all commands are unreachable.")
-
-    if not config.MUTE_ROLE_ID:
-        warnings.append("MUTE_ROLE_ID is not set - /mute will refuse; /tempmute still works.")
-
-    non_approved_exempt = config.GLOBAL_ACTION_EXEMPT_GUILD_IDS - config.APPROVED_GUILD_IDS
-    if config.APPROVED_GUILD_IDS and non_approved_exempt:
-        warnings.append(
-            f"{len(non_approved_exempt)} guild(s) in GLOBAL_ACTION_EXEMPT_GUILD_IDS are not in "
-            "APPROVED_GUILD_IDS - they would never receive global actions anyway."
-        )
-
-    return warnings
+    report = Report()
+    check_config(report, config)
+    return [
+        f"{finding.code} {CODES[finding.code].title}: {finding.detail} Fix: {CODES[finding.code].fix}"
+        for finding in report.findings
+    ]

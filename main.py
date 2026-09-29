@@ -44,6 +44,9 @@ INITIAL_COGS = (
     "cogs.server_logs",
     "cogs.alt_detector",
     "cogs.backup",
+    "cogs.appeals",
+    "cogs.help",
+    "cogs.userinfo",
 )
 
 
@@ -79,6 +82,10 @@ class ModBot(commands.Bot):
             allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),
         )
         self.health = HealthServer(self)
+        self.app_command_ids: dict[str, int] = {}
+        # Read by /syscheck.
+        self.failed_extensions: list[str] = []
+        self.sync_error: str | None = None
 
     async def setup_hook(self) -> None:
         loaded, failed = 0, []
@@ -91,15 +98,19 @@ class ModBot(commands.Bot):
                 failed.append(extension)
                 logger.exception("Failed to load extension %s", extension)
         logger.info("Loaded %d/%d extensions", loaded, len(INITIAL_COGS))
+        self.failed_extensions = failed
         if failed:
             logger.error("Extensions unavailable this run: %s", ", ".join(failed))
 
         try:
             synced = await self.tree.sync()
+            # Lets /help render clickable </command:id> mentions.
+            self.app_command_ids = {command.name: command.id for command in synced}
             logger.info("Synced %d slash command(s)", len(synced))
         except discord.HTTPException as error:
             # Usually a rate limit. The bot still works via prefix commands and the
             # previously-registered slash commands, so this is not fatal.
+            self.sync_error = str(error)
             logger.warning("Slash command sync failed (%s) - existing commands remain registered", error)
 
     async def on_ready(self) -> None:
@@ -164,8 +175,10 @@ def describe_error(error: BaseException) -> tuple[str, bool]:
         return f"Missing argument: `{error.param.name}`.", False
     if isinstance(error, (commands.MemberNotFound, commands.UserNotFound)):
         return "I couldn't find that user.", False
-    if isinstance(error, commands.BadArgument):
-        return "One of those arguments wasn't valid.", False
+    if isinstance(error, commands.BadUnionArgument):
+        return "I couldn't find that user. Use a mention or their user ID.", False
+    if isinstance(error, commands.UserInputError):
+        return "One of those arguments wasn't valid. Check `/help` for how to use it.", False
     return (
         f"Something went wrong running that command (`{type(error).__name__}`). Check the logs.",
         True,

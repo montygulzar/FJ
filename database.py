@@ -127,6 +127,34 @@ SCHEMA_STATEMENTS = (
         PRIMARY KEY (guild_id, channel_id)
     )
     """,
+    # Ban appeals submitted from tempban and ban DMs. One open appeal per user per guild is
+    # enforced by the partial unique index below, not just by the application.
+    """
+    CREATE TABLE IF NOT EXISTS appeals (
+        id             SERIAL PRIMARY KEY,
+        guild_id       BIGINT NOT NULL,
+        user_id        BIGINT NOT NULL,
+        answer         TEXT NOT NULL,
+        extra          TEXT,
+        status         TEXT NOT NULL DEFAULT 'pending',
+        created_at     TEXT NOT NULL,
+        decided_by     BIGINT,
+        decided_at     TEXT,
+        decision_note  TEXT,
+        message_id     BIGINT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS appeal_votes (
+        appeal_id  INTEGER NOT NULL,
+        voter_id   BIGINT NOT NULL,
+        approve    BOOLEAN NOT NULL,
+        voted_at   TEXT NOT NULL,
+        PRIMARY KEY (appeal_id, voter_id)
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_appeals_one_open ON appeals (guild_id, user_id) WHERE status = 'pending'",
+    "CREATE INDEX IF NOT EXISTS idx_appeals_guild_user ON appeals (guild_id, user_id)",
     # Users banned everywhere, including servers the bot joins later: the join
     # listener in cogs/global_moderation.py bans anyone listed here on arrival.
     """
@@ -334,13 +362,13 @@ async def _run(operation, *, idempotent: bool):
     drops mid-query is ambiguous: PostgreSQL may or may not have committed the
     statement before the client lost contact. Non-idempotent writes (an INSERT that
     allocates a case number, a DELETE ... RETURNING that consumes saved state) are
-    therefore only retried when the failure happened while acquiring the connection —
+    therefore only retried when the failure happened while acquiring the connection -
     that is, before any statement could have run. If the failure is ambiguous (after
     acquire, during execution), the operation is NOT retried and DatabaseUnavailable
     is raised so the caller can surface a safe error to the user.
 
-    Callers that are naturally safe to repeat — UPSERTs, DELETEs by primary key,
-    idempotent SELECTs — should pass idempotent=True so they benefit from retry.
+    Callers that are naturally safe to repeat - UPSERTs, DELETEs by primary key,
+    idempotent SELECTs - should pass idempotent=True so they benefit from retry.
     """
     attempt = 0
     while True:
@@ -538,16 +566,29 @@ DEFAULT_SETTINGS: dict = {
 _SETTINGS_COLUMNS = frozenset(DEFAULT_SETTINGS)
 
 
+# Every logged event (each edited or deleted message, every join) reads these
+# settings, so they're cached. Only this process writes them, and every write goes
+# through _invalidate_settings, so the cache can't go stale.
+_settings_cache: dict[int, dict] = {}
+
+
+def _invalidate_settings(guild_id: int) -> None:
+    _settings_cache.pop(guild_id, None)
+
+
 async def get_guild_settings(guild_id: int) -> dict:
-    row = await _fetch_one("SELECT * FROM guild_settings WHERE guild_id = $1", guild_id)
-    if row is None:
-        return {"guild_id": guild_id, **DEFAULT_SETTINGS}
-    return dict(row)
+    cached = _settings_cache.get(guild_id)
+    if cached is None:
+        row = await _fetch_one("SELECT * FROM guild_settings WHERE guild_id = $1", guild_id)
+        cached = {"guild_id": guild_id, **DEFAULT_SETTINGS} if row is None else dict(row)
+        _settings_cache[guild_id] = cached
+    return dict(cached)  # a copy, so callers can't change the cached value
 
 
 async def _upsert_settings(guild_id: int, column: str, value) -> None:
     if column not in _SETTINGS_COLUMNS:
         raise ValueError(f"Refusing to write unknown settings column {column!r}")
+    _invalidate_settings(guild_id)
     await _execute(
         f"""
         INSERT INTO guild_settings (guild_id, {column})
@@ -557,6 +598,7 @@ async def _upsert_settings(guild_id: int, column: str, value) -> None:
         guild_id, value,
         idempotent=True,
     )
+    _invalidate_settings(guild_id)
 
 
 async def set_log_channel(guild_id: int, channel_id: int) -> None:
@@ -571,10 +613,6 @@ async def set_announce_channel(guild_id: int, channel_id: int | None) -> None:
     await _upsert_settings(guild_id, "announce_channel_id", channel_id)
 
 
-async def set_lockdown_role(guild_id: int, role_id: int | None) -> None:
-    await _upsert_settings(guild_id, "lockdown_role_id", role_id)
-
-
 async def set_raid_protection(guild_id: int, min_account_age_hours: int | None) -> None:
     await _upsert_settings(guild_id, "raid_min_account_age_hours", min_account_age_hours)
 
@@ -586,6 +624,7 @@ async def set_warn_thresholds(
     kick_threshold: int | None,
     ban_threshold: int | None,
 ) -> None:
+    _invalidate_settings(guild_id)
     await _execute(
         """
         INSERT INTO guild_settings
@@ -600,6 +639,7 @@ async def set_warn_thresholds(
         guild_id, mute_threshold, mute_minutes, kick_threshold, ban_threshold,
         idempotent=True,
     )
+    _invalidate_settings(guild_id)
 
 
 # --- Lockdown roles ----------------------------------------------------------
@@ -660,6 +700,127 @@ async def get_expired_temp_bans(now: datetime) -> list[asyncpg.Record]:
         "SELECT guild_id, user_id FROM temp_bans WHERE unban_at <= $1",
         now.isoformat(),
     )
+
+
+# --- Appeals ------------------------------------------------------------------
+
+async def create_appeal(guild_id: int, user_id: int, answer: str, extra: str | None) -> int | None:
+    """Open an appeal and return its ID, or None if one is already pending for this ban."""
+    return await _run(
+        lambda conn: conn.fetchval(
+            """
+            INSERT INTO appeals (guild_id, user_id, answer, extra, created_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (guild_id, user_id) WHERE status = 'pending' DO NOTHING
+            RETURNING id
+            """,
+            guild_id, user_id, answer, extra, datetime.now(timezone.utc).isoformat(),
+        ),
+        idempotent=False,
+    )
+
+
+async def delete_appeal(appeal_id: int) -> None:
+    """Remove an appeal that never reached staff, so it doesn't block a retry."""
+    await _execute("DELETE FROM appeal_votes WHERE appeal_id = $1", appeal_id, idempotent=True)
+    await _execute("DELETE FROM appeals WHERE id = $1", appeal_id, idempotent=True)
+
+
+async def set_appeal_message(appeal_id: int, message_id: int) -> None:
+    await _execute("UPDATE appeals SET message_id = $2 WHERE id = $1", appeal_id, message_id, idempotent=True)
+
+
+async def get_appeal(appeal_id: int) -> asyncpg.Record | None:
+    return await _fetch_one("SELECT * FROM appeals WHERE id = $1", appeal_id)
+
+
+async def get_open_appeal(guild_id: int, user_id: int) -> asyncpg.Record | None:
+    return await _fetch_one(
+        "SELECT * FROM appeals WHERE guild_id = $1 AND user_id = $2 AND status = 'pending'",
+        guild_id, user_id,
+    )
+
+
+async def get_last_denied_appeal(guild_id: int, user_id: int) -> asyncpg.Record | None:
+    return await _fetch_one(
+        """
+        SELECT * FROM appeals
+        WHERE guild_id = $1 AND user_id = $2 AND status = 'denied'
+        ORDER BY id DESC LIMIT 1
+        """,
+        guild_id, user_id,
+    )
+
+
+async def count_appeals(guild_id: int, user_id: int) -> int:
+    return (
+        await _fetch_val("SELECT COUNT(*) FROM appeals WHERE guild_id = $1 AND user_id = $2", guild_id, user_id)
+    ) or 0
+
+
+async def decide_appeal(appeal_id: int, status: str, moderator_id: int, note: str | None) -> bool:
+    """Close a pending appeal. False if it was already decided, so two staff can't both act on it."""
+    if status not in {"accepted", "denied"}:
+        raise ValueError(f"Invalid appeal status {status!r}")
+    updated = await _execute(
+        """
+        UPDATE appeals
+        SET status = $2, decided_by = $3, decided_at = $4, decision_note = $5
+        WHERE id = $1 AND status = 'pending'
+        """,
+        appeal_id, status, moderator_id, datetime.now(timezone.utc).isoformat(), note,
+        idempotent=False,
+    )
+    return updated == 1
+
+
+async def cast_vote(appeal_id: int, voter_id: int, approve: bool | None) -> None:
+    """Record, change, or (approve=None) withdraw someone's vote on an appeal."""
+    if approve is None:
+        await _execute(
+            "DELETE FROM appeal_votes WHERE appeal_id = $1 AND voter_id = $2", appeal_id, voter_id, idempotent=True
+        )
+        return
+    await _execute(
+        """
+        INSERT INTO appeal_votes (appeal_id, voter_id, approve, voted_at)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (appeal_id, voter_id) DO UPDATE SET approve = EXCLUDED.approve, voted_at = EXCLUDED.voted_at
+        """,
+        appeal_id, voter_id, approve, datetime.now(timezone.utc).isoformat(),
+        idempotent=True,
+    )
+
+
+async def get_votes(appeal_id: int) -> list[asyncpg.Record]:
+    return await _fetch_all(
+        "SELECT voter_id, approve FROM appeal_votes WHERE appeal_id = $1 ORDER BY voted_at", appeal_id
+    )
+
+
+async def get_latest_ban_case(guild_id: int, user_id: int) -> asyncpg.Record | None:
+    return await _fetch_one(
+        """
+        SELECT * FROM cases
+        WHERE guild_id = $1 AND user_id = $2 AND action_type IN ('ban', 'tempban', 'blacklist', 'global_ban')
+        ORDER BY id DESC LIMIT 1
+        """,
+        guild_id, user_id,
+    )
+
+
+async def get_temp_ban(guild_id: int, user_id: int) -> asyncpg.Record | None:
+    return await _fetch_one(
+        "SELECT unban_at FROM temp_bans WHERE guild_id = $1 AND user_id = $2", guild_id, user_id
+    )
+
+
+async def get_case_counts_for_user(guild_id: int, user_id: int) -> dict[str, int]:
+    rows = await _fetch_all(
+        "SELECT action_type, COUNT(*) AS total FROM cases WHERE guild_id = $1 AND user_id = $2 GROUP BY action_type",
+        guild_id, user_id,
+    )
+    return {row["action_type"]: row["total"] for row in rows}
 
 
 # --- Global blacklist ---------------------------------------------------------
@@ -742,7 +903,7 @@ async def get_locked_channel_ids(guild_id: int) -> list[int]:
 async def check_connection() -> tuple[bool, str]:
     """Round-trip a trivial query. Returns (ok, latency or error text).
 
-    Error text is the exception class name only — the full message may contain
+    Error text is the exception class name only - the full message may contain
     connection details that should not reach an HTTP endpoint or a Discord embed.
     """
     if not is_connected():
@@ -754,6 +915,20 @@ async def check_connection() -> tuple[bool, str]:
         return True, f"{elapsed_ms:.1f}ms"
     except Exception as error:
         return False, f"{type(error).__name__}: query failed"
+
+
+EXPECTED_TABLES = (
+    "cases", "guild_settings", "lockdown_roles", "temp_bans", "channel_locks",
+    "appeals", "appeal_votes", "global_blacklist",
+)
+
+
+async def missing_tables() -> list[str]:
+    rows = await _fetch_all(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"
+    )
+    present = {row["table_name"] for row in rows}
+    return [table for table in EXPECTED_TABLES if table not in present]
 
 
 async def get_total_case_count() -> int:

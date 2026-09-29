@@ -16,8 +16,6 @@ from embeds import MUTED_COLOR, NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, build_
 from guards import has_tier
 from modlog import post_to_log_channel
 
-MAX_SLOWMODE_SECONDS = 21600  # Discord's own cap: 6 hours
-MAX_PURGE_MESSAGES = 100
 
 TRISTATE_TO_TEXT = {True: "true", False: "false", None: "none"}
 TEXT_TO_TRISTATE = {"true": True, "false": False, "none": None}
@@ -146,7 +144,7 @@ class ChannelModeration(commands.Cog):
 
         scope = f" from {member.mention}" if member else ""
         embed = base_embed(
-            "Messages Purged",
+            "\U0001F9F9  Messages Purged",
             NEUTRAL_COLOR,
             f"Deleted **{len(deleted)}** message(s){scope} in {ctx.channel.mention}.",
         )
@@ -154,7 +152,7 @@ class ChannelModeration(commands.Cog):
         # Only warn about the 14-day limit when no member filter was in play;
         # otherwise a shortfall usually just means the filter didn't match, not an age cap.
         if member is None and len(deleted) < amount:
-            embed.set_footer(text="Discord can only bulk delete messages under 14 days old.")
+            embed.add_field(name="Note", value="Discord can only bulk delete messages under 14 days old.", inline=False)
 
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)
@@ -183,7 +181,7 @@ class ChannelModeration(commands.Cog):
         if failed_roles:
             description += f"\nFailed to apply to: {', '.join(failed_roles)} - check my permissions."
 
-        embed = base_embed("Channel Locked", MUTED_COLOR, description)
+        embed = base_embed("\U0001F512  Channel Locked", MUTED_COLOR, description)
         embed.add_field(name="Reason", value=clamp(reason), inline=False)
         embed.add_field(name="Locked by", value=ctx.author.mention, inline=True)
         await ctx.send(embed=embed)
@@ -210,7 +208,7 @@ class ChannelModeration(commands.Cog):
                     pass
 
             embed = base_embed(
-                "Channel Unlocked",
+                "\U0001F513  Channel Unlocked",
                 SUCCESS_COLOR,
                 f"No lock record found for {target.mention} - reset send permissions to default.",
             )
@@ -226,7 +224,7 @@ class ChannelModeration(commands.Cog):
         if failed_roles:
             description += f"\nFailed to restore: {', '.join(r.mention for r in failed_roles)}"
 
-        embed = base_embed("Channel Unlocked", SUCCESS_COLOR, description)
+        embed = base_embed("\U0001F513  Channel Unlocked", SUCCESS_COLOR, description)
         embed.add_field(name="Unlocked by", value=ctx.author.mention, inline=True)
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)

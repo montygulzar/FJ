@@ -1,9 +1,9 @@
 # Terms of Service
 
 **Application:** FJUSA Mod Bot
-**Operator:** <your name>
-**Contact:** <your Discord username and ID>
-**Last updated:** 27/07/26
+**Operator:** xe2b
+**Contact:** DM xe2b on Discord | ID-1195765102725582968
+**Last updated:** 29/09/26
 
 By adding the Application to a Discord server, or by using its commands in a server where it is present, you agree to these terms. If you do not agree, do not use the Application.
 
@@ -67,7 +67,7 @@ Nothing in these terms excludes or limits liability where it would be unlawful t
 
 ## 10\. Reporting problems
 
-To report a bug, a violation of these terms, or misuse of the Application, contact us at the operator, ID-1285998518213017663. We review reports and will take action where appropriate.
+To report a bug, a violation of these terms, or misuse of the Application, DM xe2b on Discord (ID 1195765102725582968). We review reports and will take action where appropriate.
 
 ## 11\. Changes
 

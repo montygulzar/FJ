@@ -1,8 +1,9 @@
 import logging
+from datetime import datetime, timedelta
 
 import discord
-from discord.ext import commands
 
+from config import LOG_CHANNEL_IDS, LOG_KINDS
 from database import add_case, get_guild_settings
 from embeds import build_case_embed
 
@@ -51,12 +52,17 @@ async def _resolve_channel(guild: discord.Guild, channel_id: int) -> discord.abc
     return channel
 
 
-async def _send_to_channel(guild: discord.Guild, channel_id: int, embed: discord.Embed) -> None:
+async def _send_to_channel(
+    guild: discord.Guild, channel_id: int, embed: discord.Embed, view: discord.ui.View | None = None
+) -> None:
     channel = await _resolve_channel(guild, channel_id)
     if channel is None:
         return
     try:
-        await channel.send(embed=embed)
+        if view is not None:
+            await channel.send(embed=embed, view=view)
+        else:
+            await channel.send(embed=embed)
     except discord.Forbidden:
         logger.warning(
             "Missing Send Messages or Embed Links in log channel %s in guild %s (%s)",
@@ -69,26 +75,65 @@ async def _send_to_channel(guild: discord.Guild, channel_id: int, embed: discord
         )
 
 
-async def post_to_log_channel(guild: discord.Guild, embed: discord.Embed) -> None:
-    """Post a moderation case embed to the guild's mod-log channel."""
-    settings = await get_guild_settings(guild.id)
-    channel_id = settings["log_channel_id"]
-    if channel_id is None:
-        return
-    await _send_to_channel(guild, channel_id, embed)
+LOG_CATEGORIES = tuple(LOG_CHANNEL_IDS)
 
 
-async def post_to_server_log_channel(guild: discord.Guild, embed: discord.Embed) -> None:
-    """Post a server event embed to the server-log channel.
+def env_log_channel_id(guild: discord.Guild, category: str) -> int | None:
+    """The channel from <CATEGORY>_LOG_CHANNEL_IDS that lives in this guild, if any.
 
-    Falls back to the main mod-log channel if no separate server-log channel is set,
-    so existing setups that use one channel for everything continue to work.
+    The env lists hold one channel per server, so the right one is whichever the
+    guild actually contains.
     """
+    for channel_id in LOG_CHANNEL_IDS.get(category, ()):
+        if guild.get_channel_or_thread(channel_id) is not None:
+            return channel_id
+    return None
+
+
+async def resolve_log_channel_id(guild: discord.Guild, category: str) -> int | None:
+    """Where a log of this category goes: the env channel, else the /set*logchannel ones."""
+    channel_id = env_log_channel_id(guild, category)
+    if channel_id is not None:
+        return channel_id
     settings = await get_guild_settings(guild.id)
-    channel_id = settings.get("server_log_channel_id") or settings.get("log_channel_id")
+    if category == "mod":
+        return settings["log_channel_id"]
+    return settings.get("server_log_channel_id") or settings.get("log_channel_id")
+
+
+def log_label(category: str) -> str:
+    return LOG_KINDS[category][0]
+
+
+async def post_log(
+    guild: discord.Guild, category: str, embed: discord.Embed, view: discord.ui.View | None = None
+) -> None:
+    if category not in LOG_CHANNEL_IDS:
+        raise ValueError(f"Unknown log category {category!r}")
+    channel_id = await resolve_log_channel_id(guild, category)
     if channel_id is None:
         return
-    await _send_to_channel(guild, channel_id, embed)
+    # Tag the entry with its kind ("💬 Chat Logs - ...") on a copy: callers often send
+    # the same embed back to the moderator, who doesn't need the tag.
+    tagged = embed.copy()
+    footer = tagged.footer
+    tagged.set_footer(
+        text=f"{log_label(category)}  \u2022  {footer.text}" if footer.text else log_label(category),
+        icon_url=footer.icon_url,
+    )
+    await _send_to_channel(guild, channel_id, tagged, view)
+
+
+async def post_to_log_channel(guild: discord.Guild, embed: discord.Embed) -> None:
+    """Post a moderation embed (cases, lockdowns, purges) to the moderation log."""
+    await post_log(guild, "mod", embed)
+
+
+async def post_to_server_log_channel(
+    guild: discord.Guild, embed: discord.Embed, category: str = "server", view: discord.ui.View | None = None
+) -> None:
+    """Post a server event to its category's log channel (see LOG_CHANNEL_IDS)."""
+    await post_log(guild, category, embed, view)
 
 
 async def check_log_channel(guild: discord.Guild) -> tuple[bool, str]:
@@ -147,30 +192,39 @@ async def _check_channel_id(
     return True, f"{channel.mention} is set and reachable{suffix}."
 
 
+async def record_case_full(
+    guild: discord.Guild,
+    target: discord.abc.User,
+    moderator: discord.abc.User,
+    action_type: str,
+    reason: str,
+    *,
+    duration: timedelta | None = None,
+    expires_at: datetime | None = None,
+) -> tuple[discord.Embed, int]:
+    """Save the case, post it to the mod-log channel, and return (embed, case number)."""
+    case_id = await add_case(guild.id, target.id, moderator.id, action_type, reason)
+    embed = build_case_embed(
+        action_type, target, moderator, reason, case_id, duration=duration, expires_at=expires_at
+    )
+    await post_to_log_channel(guild, embed)
+    return embed, case_id
+
+
 async def record_case(
     guild: discord.Guild,
     target: discord.abc.User,
     moderator: discord.abc.User,
     action_type: str,
     reason: str,
+    *,
+    duration: timedelta | None = None,
+    expires_at: datetime | None = None,
 ) -> discord.Embed:
     """Save the case, post it to the mod-log channel, and return the embed."""
-    case_id = await add_case(guild.id, target.id, moderator.id, action_type, reason)
-    embed = build_case_embed(action_type, target, moderator, reason, case_id)
-    await post_to_log_channel(guild, embed)
-    return embed
-
-
-async def announce_case(
-    ctx: commands.Context,
-    target: discord.abc.User,
-    action_type: str,
-    reason: str,
-    moderator: discord.abc.User | None = None,
-) -> discord.Embed:
-    """record_case, plus the reply in the channel the command was run from."""
-    embed = await record_case(ctx.guild, target, moderator or ctx.author, action_type, reason)
-    await ctx.send(embed=embed)
+    embed, _ = await record_case_full(
+        guild, target, moderator, action_type, reason, duration=duration, expires_at=expires_at
+    )
     return embed
 
 

@@ -1,9 +1,17 @@
-from datetime import datetime
+"""Every embed the bot sends is built here, so the whole bot shares one look.
+
+Design rules:
+- One accent colour (BRAND_COLOR) for neutral/info embeds; green/red/amber only
+  carry meaning (success, failure/danger, warning).
+- Every embed ends with the branded footer (bot name + avatar) and a timestamp.
+- Case embeds read top to bottom: what happened, to whom, by whom, why.
+"""
+from datetime import datetime, timedelta
 from typing import NamedTuple
 
 import discord
 
-from config import APPEAL_URL, BRAND_NAME, SERVER_DISPLAY_NAME
+from config import APPEAL_URL, BRAND_COLOR, BRAND_NAME, LOGO_URL, SERVER_DISPLAY_NAME
 
 
 class ActionStyle(NamedTuple):
@@ -13,24 +21,31 @@ class ActionStyle(NamedTuple):
     dm_line: str
 
 
-NEUTRAL_COLOR = 0x5865F2
-SUCCESS_COLOR = 0x3BA55D
-DANGER_COLOR = 0xD93A3A
-MUTED_COLOR = 0x4F545C
+NEUTRAL_COLOR = BRAND_COLOR
+SUCCESS_COLOR = 0x22C55E
+DANGER_COLOR = 0xEF4444
+WARNING_COLOR = 0xF59E0B
+MUTED_COLOR = 0x64748B
+
+SUCCESS_ICON = "✅"
+ERROR_ICON = "❌"
+WARNING_ICON = "⚠️"
 
 ACTION_STYLES = {
-    "warn":          ActionStyle(0xF5A524, "\u26A0",     "Warning",       "You were warned in {location}."),
-    "mute":          ActionStyle(0xE8833A, "\U0001F507", "Mute",          "You were muted in {location}."),
-    "tempmute":      ActionStyle(0xE8833A, "\u23F2",     "Temp Mute",     "You were temporarily muted in {location}."),
-    "unmute":        ActionStyle(SUCCESS_COLOR, "\U0001F508", "Unmute",   ""),
-    "kick":          ActionStyle(0xE85D3A, "\U0001F6AA", "Kick",          "You were kicked from {location}."),
-    "ban":           ActionStyle(DANGER_COLOR, "\U0001F6D1", "Ban",       "You were banned from {location}."),
-    "unban":         ActionStyle(SUCCESS_COLOR, "\U0001F513", "Unban",    ""),
-    "global_mute":   ActionStyle(0xC26B25, "\U0001F507", "Global Mute",   "You were muted across all servers."),
-    "global_unmute": ActionStyle(SUCCESS_COLOR, "\U0001F508", "Global Unmute", ""),
-    "global_kick":   ActionStyle(0xB84A2E, "\U0001F6AA", "Global Kick",   "You were removed from all servers."),
-    "global_ban":    ActionStyle(0xA32828, "\U0001F6D1", "Global Ban",    "You were banned across all servers."),
-    "global_unban":  ActionStyle(SUCCESS_COLOR, "\U0001F513", "Global Unban", ""),
+    "warn":          ActionStyle(0xF59E0B, "⚠️", "Warning",       "You were warned in {location}."),
+    "mute":          ActionStyle(0xF97316, "\U0001F507", "Mute",            "You were muted in {location}."),
+    "tempmute":      ActionStyle(0xFB923C, "⏲️", "Temp Mute",     "You were temporarily muted in {location}."),
+    "unmute":        ActionStyle(SUCCESS_COLOR, "\U0001F50A", "Unmute",     "You were unmuted in {location}."),
+    "kick":          ActionStyle(0xEA580C, "\U0001F462", "Kick",            "You were kicked from {location}."),
+    "ban":           ActionStyle(DANGER_COLOR, "\U0001F528", "Ban",         "You were banned from {location}."),
+    "tempban":       ActionStyle(0xDC2626, "⏳", "Temp Ban",            "You were temporarily banned from {location}."),
+    "unban":         ActionStyle(SUCCESS_COLOR, "\U0001F513", "Unban",      "You were unbanned from {location}."),
+    "global_mute":   ActionStyle(0xC2410C, "\U0001F507", "Global Mute",     "You were muted across all {network} servers."),
+    "global_unmute": ActionStyle(SUCCESS_COLOR, "\U0001F50A", "Global Unmute", "You were unmuted across all {network} servers."),
+    "global_kick":   ActionStyle(0xB91C1C, "\U0001F462", "Global Kick",     "You were removed from all {network} servers."),
+    "global_ban":    ActionStyle(0x991B1B, "\U0001F310", "Global Ban",      "You were banned across all {network} servers."),
+    "global_unban":  ActionStyle(SUCCESS_COLOR, "\U0001F513", "Global Unban", "You were unbanned across all {network} servers."),
+    "blacklist":     ActionStyle(0x7F1D1D, "\u26D4", "Blacklist",         "You were blacklisted from {location}."),
 }
 
 FALLBACK_STYLE = ActionStyle(NEUTRAL_COLOR, "\U0001F4CB", "Action", "")
@@ -43,9 +58,15 @@ EMBED_FIELD_LIMIT = 1024
 EMBED_DESCRIPTION_LIMIT = 4096
 
 
+
 def set_brand_icon(url: str) -> None:
     global BRAND_ICON_URL
     BRAND_ICON_URL = url
+
+
+def logo_url() -> str | None:
+    """The FJUSA logo: LOGO_URL if configured, otherwise the bot's avatar (see /setlogo)."""
+    return LOGO_URL or BRAND_ICON_URL
 
 
 def clamp(text: str | None, limit: int = EMBED_FIELD_LIMIT, *, empty: str = "*Not specified*") -> str:
@@ -87,10 +108,44 @@ def format_timestamp(iso_string: str, style: str = "f") -> str:
     return discord.utils.format_dt(parsed, style=style)
 
 
-def base_embed(title: str, color: int, description: str | None = None) -> discord.Embed:
-    embed = discord.Embed(title=title, description=description, color=color, timestamp=discord.utils.utcnow())
-    embed.set_footer(text=BRAND_NAME, icon_url=BRAND_ICON_URL)
+def format_duration(delta: timedelta) -> str:
+    """timedelta(days=1, hours=2) -> '1 day, 2 hours'. Shows at most the two largest units."""
+    seconds = int(delta.total_seconds())
+    parts = []
+    for unit, size in (("week", 604800), ("day", 86400), ("hour", 3600), ("minute", 60)):
+        amount, seconds = divmod(seconds, size)
+        if amount:
+            parts.append(f"{amount} {unit}{'' if amount == 1 else 's'}")
+    return ", ".join(parts[:2]) or "less than a minute"
+
+
+def user_line(user: discord.abc.User) -> str:
+    """'@mention' plus the raw ID, which survives the account being renamed or deleted."""
+    return f"{user.mention}\n`{user.id}`"
+
+
+def branded(embed: discord.Embed, *, footer_prefix: str | None = None) -> discord.Embed:
+    """Apply the shared footer and timestamp. Every outgoing embed should pass through here."""
+    text = f"{footer_prefix}  •  {BRAND_NAME}" if footer_prefix else BRAND_NAME
+    embed.set_footer(text=text, icon_url=logo_url())
+    if embed.timestamp is None:
+        embed.timestamp = discord.utils.utcnow()
     return embed
+
+
+def base_embed(title: str, color: int, description: str | None = None) -> discord.Embed:
+    return branded(discord.Embed(title=title, description=description, color=color))
+
+
+def build_notice_embed(message: str, *, success: bool = True, title: str | None = None) -> discord.Embed:
+    """The one-line reply every command uses for confirmations and refusals."""
+    icon = SUCCESS_ICON if success else ERROR_ICON
+    embed = discord.Embed(
+        title=f"{icon}  {title}" if title else None,
+        description=clamp(message if title else f"{icon}  {message}", EMBED_DESCRIPTION_LIMIT, empty="Done."),
+        color=SUCCESS_COLOR if success else DANGER_COLOR,
+    )
+    return branded(embed)
 
 
 def build_case_embed(
@@ -99,29 +154,67 @@ def build_case_embed(
     moderator: discord.abc.User,
     reason: str,
     case_id: int,
+    *,
+    duration: timedelta | None = None,
+    expires_at: datetime | None = None,
 ) -> discord.Embed:
     style = style_for(action_type)
-    embed = discord.Embed(color=style.color, timestamp=discord.utils.utcnow())
-    embed.set_author(name=f"{style.icon}  {style.title}", icon_url=BRAND_ICON_URL)
+    embed = discord.Embed(color=style.color)
+    embed.set_author(name=f"{style.icon}  {style.title}  •  Case #{case_id}", icon_url=BRAND_ICON_URL)
     embed.set_thumbnail(url=target.display_avatar.url)
-    embed.description = f"**{target}**\n`{target.id}`"
-    embed.add_field(name="Moderator", value=moderator.mention, inline=True)
-    embed.add_field(name="Reason", value=clamp(reason), inline=False)
-    embed.set_footer(text=f"Case #{case_id}  \u2022  {BRAND_NAME}", icon_url=BRAND_ICON_URL)
-    return embed
+    embed.add_field(name="User", value=user_line(target), inline=True)
+    embed.add_field(name="Moderator", value=user_line(moderator), inline=True)
+    if duration is not None:
+        embed.add_field(name="Duration", value=format_duration(duration), inline=True)
+    if expires_at is not None:
+        embed.add_field(
+            name="Expires",
+            value=f"{discord.utils.format_dt(expires_at, 'f')}\n{discord.utils.format_dt(expires_at, 'R')}",
+            inline=True,
+        )
+    embed.add_field(name="Reason", value=f">>> {clamp(reason, 1000)}", inline=False)
+    return branded(embed, footer_prefix=f"Case #{case_id}")
 
 
-def build_dm_notice_embed(action_type: str, location_name: str, reason: str) -> discord.Embed:
+def dm_headline(action_type: str, location_name: str) -> str:
+    """'You were muted in FJUSA' - the sentence a DM leads with."""
     style = style_for(action_type)
-    embed = discord.Embed(
-        title=f"{style.icon}  {style.title}",
-        description=style.dm_line.format(location=f"**{location_name}**") or None,
-        color=style.color,
-        timestamp=discord.utils.utcnow(),
-    )
-    embed.add_field(name="Reason", value=clamp(reason), inline=False)
-    embed.set_footer(text=BRAND_NAME, icon_url=BRAND_ICON_URL)
-    return embed
+    line = style.dm_line.format(location=location_name, network=SERVER_DISPLAY_NAME).rstrip(".")
+    return f"{style.icon}  {line or style.title}"
+
+
+def build_dm_notice_embed(
+    action_type: str,
+    location_name: str,
+    reason: str,
+    *,
+    guild: discord.Guild | None = None,
+    expires_at: datetime | None = None,
+    duration: timedelta | None = None,
+    case_id: int | None = None,
+    note: str | None = None,
+) -> discord.Embed:
+    """What the member receives: a headline, the reason, and when it ends."""
+    style = style_for(action_type)
+    embed = discord.Embed(title=dm_headline(action_type, location_name)[:256], description=note, color=style.color)
+    if guild is not None:
+        embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+    else:
+        embed.set_author(name=f"{SERVER_DISPLAY_NAME} Network", icon_url=logo_url())
+    if logo_url():
+        embed.set_thumbnail(url=logo_url())
+    embed.add_field(name="Reason", value=f">>> {clamp(reason, 1000)}", inline=False)
+    if duration is not None:
+        embed.add_field(name="Duration", value=format_duration(duration), inline=True)
+    if expires_at is not None:
+        embed.add_field(
+            name="Ends",
+            value=f"{discord.utils.format_dt(expires_at, 'f')}\n{discord.utils.format_dt(expires_at, 'R')}",
+            inline=True,
+        )
+    if case_id is not None:
+        embed.add_field(name="Case", value=f"`#{case_id}`", inline=True)
+    return branded(embed, footer_prefix="Automated notice")
 
 
 def build_summary_embed(
@@ -131,23 +224,22 @@ def build_summary_embed(
     failed: list[str],
 ) -> discord.Embed:
     style = style_for(action_type)
-    embed = discord.Embed(color=style.color, timestamp=discord.utils.utcnow())
-    embed.set_author(name=f"{style.icon}  {style.title}", icon_url=BRAND_ICON_URL)
+    embed = discord.Embed(color=style.color)
+    embed.set_author(name=f"{style.icon}  {style.title}", icon_url=logo_url())
     embed.set_thumbnail(url=user.display_avatar.url)
-    embed.description = f"**{user}**\n`{user.id}`"
+    embed.description = f"**{user}**  •  `{user.id}`"
     embed.add_field(
-        name=f"Applied in {len(affected)} server(s)",
-        value=clamp("\n".join(f"- {name}" for name in affected), empty="*None*"),
+        name=f"{SUCCESS_ICON}  Applied in {len(affected)} server(s)",
+        value=clamp("\n".join(f"• {name}" for name in affected), empty="*None*"),
         inline=False,
     )
     if failed:
         embed.add_field(
-            name=f"Skipped, missing permissions ({len(failed)})",
-            value=clamp("\n".join(f"- {name}" for name in failed)),
+            name=f"{WARNING_ICON}  Skipped, missing permissions ({len(failed)})",
+            value=clamp("\n".join(f"• {name}" for name in failed)),
             inline=False,
         )
-    embed.set_footer(text=BRAND_NAME, icon_url=BRAND_ICON_URL)
-    return embed
+    return branded(embed)
 
 
 def build_case_line(row, guild: discord.Guild) -> tuple[str, str]:
@@ -155,51 +247,130 @@ def build_case_line(row, guild: discord.Guild) -> tuple[str, str]:
     style = style_for(row["action_type"])
     moderator = guild.get_member(row["moderator_id"])
     moderator_name = moderator.mention if moderator else f"`{row['moderator_id']}`"
-    name = f"{style.icon}  Case #{row['id']}  \u2022  {style.title}"
+    name = f"{style.icon}  Case #{row['id']}  •  {style.title}"
     reason = clamp(row["reason"], limit=800)
-    value = f"{reason}\n{moderator_name}  \u2022  {format_timestamp(row['created_at'], 'R')}"
+    value = f"{reason}\n{moderator_name}  •  {format_timestamp(row['created_at'], 'R')}"
     return name, value
 
+
+BAN_KINDS = ("tempban", "ban", "blacklist", "global")
 
 
 def build_ban_dm_embed(
     reason: str,
     *,
-    is_global: bool = False,
+    kind: str = "ban",
+    guild: discord.Guild | None = None,
     unban_at: str | None = None,
+    can_appeal_here: bool = False,
+    can_contact_developer: bool = False,
 ) -> discord.Embed:
-    """A professional ban DM, with optional expiry field for temp-bans.
+    """The DM sent before a ban lands.
 
-    Separate from build_dm_notice_embed so the appeal link and branding can be
-    applied consistently without complicating the generic notice path.
+    kind:
+      tempban   - ends on its own, can be appealed
+      ban       - permanent, can be appealed
+      blacklist - permanent and final, cannot be appealed
+      global    - blacklisted from every server, final
     """
-    scope = f"all {SERVER_DISPLAY_NAME} servers" if is_global else SERVER_DISPLAY_NAME
-    embed = discord.Embed(
-        title="🛑  You have been banned",
-        description=f"You have been banned from **{scope}**.",
-        color=DANGER_COLOR,
-        timestamp=discord.utils.utcnow(),
+    if kind not in BAN_KINDS:
+        raise ValueError(f"Unknown ban kind {kind!r}")
+    location = guild.name if guild is not None else SERVER_DISPLAY_NAME
+    action_type = {"tempban": "tempban", "ban": "ban", "blacklist": "blacklist", "global": "global_ban"}[kind]
+    headline = (
+        f"\U0001F310  You were blacklisted from all {SERVER_DISPLAY_NAME} servers"
+        if kind == "global"
+        else dm_headline(action_type, location)
     )
-    embed.add_field(name="Reason", value=clamp(reason), inline=False)
-    if unban_at is not None:
-        embed.add_field(name="Ban expires", value=unban_at, inline=False)
+    embed = discord.Embed(title=headline[:256], color=style_for(action_type).color)
+    if guild is not None and kind != "global":
+        embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
     else:
-        embed.add_field(name="Duration", value="Permanent", inline=False)
-    if APPEAL_URL:
+        embed.set_author(name=f"{SERVER_DISPLAY_NAME} Network", icon_url=logo_url())
+    if logo_url():
+        embed.set_thumbnail(url=logo_url())
+
+    embed.add_field(name="Reason", value=f">>> {clamp(reason, 1000)}", inline=False)
+    if kind == "tempban":
+        embed.add_field(name="Duration", value=unban_at or "Temporary", inline=False)
+    elif kind == "ban":
+        embed.add_field(name="Duration", value="Permanent - until an appeal is accepted", inline=False)
+    else:
+        embed.add_field(name="Duration", value="\u26D4 Permanent and **final** - this ban cannot be appealed", inline=False)
+
+    if kind in ("blacklist", "global"):
+        if can_contact_developer:
+            embed.add_field(
+                name="Staff abuse?",
+                value="If you believe this was an abuse of power, press **Message Developer** below.",
+                inline=False,
+            )
+    elif can_appeal_here:
         embed.add_field(
             name="Appeals",
-            value=(
-                "If you believe this ban was issued in error, you may appeal by joining the "
-                f"[{SERVER_DISPLAY_NAME} Appeals server]({APPEAL_URL})."
-            ),
+            value="Think this was a mistake? Press **Submit an appeal** below and staff will review it.",
             inline=False,
         )
-    embed.set_footer(text=BRAND_NAME, icon_url=BRAND_ICON_URL)
+    elif APPEAL_URL:
+        embed.add_field(
+            name="Appeals",
+            value=f"You can appeal in the [{SERVER_DISPLAY_NAME} Appeals server]({APPEAL_URL}).",
+            inline=False,
+        )
+    return branded(embed, footer_prefix="Automated notice")
+
+
+def _appeal_dm_base(title: str, color: int, guild: discord.Guild | None) -> discord.Embed:
+    embed = discord.Embed(title=title, color=color)
+    if guild is not None:
+        embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+    if logo_url():
+        embed.set_thumbnail(url=logo_url())
     return embed
 
 
-def build_notice_embed(message: str, *, success: bool = True) -> discord.Embed:
-    return discord.Embed(
-        description=clamp(message, EMBED_DESCRIPTION_LIMIT, empty="Done."),
-        color=SUCCESS_COLOR if success else DANGER_COLOR,
+def build_appeal_receipt_dm(appeal_id: int, guild: discord.Guild | None, team: str, answer: str) -> discord.Embed:
+    """Sent when an appeal is submitted, so the user has a record of it."""
+    embed = _appeal_dm_base("\U0001F4E8  Appeal Received", NEUTRAL_COLOR, guild)
+    embed.description = (
+        f"Thanks - the **{team}** has your appeal and will review your case.\n"
+        "You'll get a DM from me as soon as there's a decision."
     )
+    embed.add_field(name="Appeal", value=f"`#{appeal_id}`", inline=True)
+    embed.add_field(name="Server", value=guild.name if guild else "Unknown", inline=True)
+    embed.add_field(name="Status", value="\u23F3 Under review", inline=True)
+    embed.add_field(name="What you wrote", value=f">>> {clamp(answer, 1000)}", inline=False)
+    return branded(embed, footer_prefix=team)
+
+
+def build_appeal_decision_dm(
+    appeal_id: int,
+    guild: discord.Guild | None,
+    team: str,
+    approved: bool,
+    *,
+    retry_at: datetime | None = None,
+) -> discord.Embed:
+    """"The FJUSA Ban Team has reviewed your case and approved/denied your appeal." """
+    where = f"**{guild.name}**" if guild else "the server"
+    if approved:
+        embed = _appeal_dm_base("\u2696\uFE0F  Appeal Approved", SUCCESS_COLOR, guild)
+        embed.description = (
+            f"The **{team}** has reviewed your case and **approved** your appeal. \U0001F7E2\n"
+            f"Your ban from {where} has been lifted."
+        )
+        embed.add_field(name="Next steps", value="Use **Rejoin** below if it's there, and please follow the rules.", inline=False)
+    else:
+        embed = _appeal_dm_base("\u2696\uFE0F  Appeal Denied", DANGER_COLOR, guild)
+        embed.description = (
+            f"The **{team}** has reviewed your case and **denied** your appeal. \U0001F534\n"
+            f"Your ban from {where} stays in place."
+        )
+        embed.add_field(
+            name="Appeal again",
+            value=f"{discord.utils.format_dt(retry_at, 'f')} ({discord.utils.format_dt(retry_at, 'R')})" if retry_at else "Now",
+            inline=False,
+        )
+    embed.add_field(name="Appeal", value=f"`#{appeal_id}`", inline=True)
+    embed.add_field(name="Result", value="\U0001F7E2 Approved" if approved else "\U0001F534 Denied", inline=True)
+    return branded(embed, footer_prefix=team)

@@ -1,34 +1,21 @@
+from pathlib import Path
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from config import APPROVED_GUILD_IDS
-from embeds import NEUTRAL_COLOR, audit_reason, base_embed, build_notice_embed, clamp
+from embeds import NEUTRAL_COLOR, audit_reason, base_embed, branded, build_notice_embed, clamp, set_brand_icon
 from guards import has_tier
+from notify import create_invite
 
 GUILDS_PER_EMBED = 10
+LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "fjusa-logo.png"
 
 
 async def resolve_invite(guild: discord.Guild) -> str | None:
-    """Reuse an existing invite where possible so repeated calls don't litter the server with new ones."""
-    if guild.me is None:
-        return None
-
-    for channel in guild.text_channels:
-        if not channel.permissions_for(guild.me).create_instant_invite:
-            continue
-        try:
-            invite = await channel.create_invite(
-                max_age=86400,  # 24 hours. Avoids leaving permanent invites lying around.
-                max_uses=0,
-                unique=False,
-                reason="Requested by bot owner",
-            )
-            return invite.url
-        except discord.HTTPException:
-            continue
-
-    return None
+    """A reusable 24h invite, so repeated /servers calls don't litter the server with new ones."""
+    return await create_invite(guild, reason="Requested by bot owner", max_uses=0, unique=False)
 
 
 class Owner(commands.Cog):
@@ -51,7 +38,7 @@ class Owner(commands.Cog):
             chunk = guilds[chunk_start : chunk_start + GUILDS_PER_EMBED]
 
             embed = base_embed(
-                f"Servers ({len(guilds)})",
+                f"\U0001F5A5\uFE0F  Servers ({len(guilds)})",
                 NEUTRAL_COLOR,
                 f"**{total_members:,}** members across all servers."
                 if chunk_start == 0
@@ -71,9 +58,10 @@ class Owner(commands.Cog):
                 ]
                 embed.add_field(name=clamp(guild.name, limit=256), value=clamp("\n".join(lines)), inline=False)
 
-            embed.set_footer(
-                text=f"Page {chunk_start // GUILDS_PER_EMBED + 1} of "
-                f"{(len(guilds) - 1) // GUILDS_PER_EMBED + 1}"
+            branded(
+                embed,
+                footer_prefix=f"Page {chunk_start // GUILDS_PER_EMBED + 1} of "
+                f"{(len(guilds) - 1) // GUILDS_PER_EMBED + 1}",
             )
             await ctx.send(embed=embed)
 
@@ -90,6 +78,9 @@ class Owner(commands.Cog):
         *,
         reason: str = "No reason provided",
     ):
+        if role.is_default() or role.managed:
+            await ctx.send(embed=build_notice_embed("That role is managed by Discord or an integration.", success=False))
+            return
         if role >= ctx.guild.me.top_role:
             await ctx.send(embed=build_notice_embed("That role is at or above my highest role.", success=False))
             return
@@ -99,6 +90,27 @@ class Owner(commands.Cog):
 
         await member.add_roles(role, reason=audit_reason(ctx.author, "Add role", reason))
         await ctx.send(embed=build_notice_embed(f"Added **{role.name}** to {member.mention}."))
+
+
+    @commands.hybrid_command(name="setlogo", description="Set the bot's avatar to the FJUSA logo")
+    @has_tier("dev")
+    async def setlogo(self, ctx: commands.Context):
+        """The avatar doubles as the logo in every embed footer and corner (unless LOGO_URL is set)."""
+        await ctx.defer(ephemeral=True)
+        try:
+            await self.bot.user.edit(avatar=LOGO_PATH.read_bytes())
+        except FileNotFoundError:
+            await ctx.send(embed=build_notice_embed(f"Couldn't find `{LOGO_PATH.name}` in assets/.", success=False))
+            return
+        except discord.HTTPException as error:
+            # Discord rate-limits avatar changes to a couple per hour.
+            await ctx.send(embed=build_notice_embed(f"Discord refused the avatar change: `{error}`", success=False))
+            return
+
+        set_brand_icon(self.bot.user.display_avatar.url)
+        embed = build_notice_embed("The bot's avatar is now the FJUSA logo - it appears on every embed.", title="Logo Updated")
+        embed.set_thumbnail(url=self.bot.user.display_avatar.url)
+        await ctx.send(embed=embed, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

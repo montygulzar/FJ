@@ -1,26 +1,56 @@
 import discord
 
 import embeds as embeds_module
-from config import APPEAL_URL, BRAND_NAME
-from embeds import DANGER_COLOR, NEUTRAL_COLOR, build_case_line
+from config import APPEAL_URL, BRAND_NAME, DEVELOPER_ID, DEVELOPER_NAME
+from embeds import NEUTRAL_COLOR, WARNING_COLOR, branded, build_case_line, build_notice_embed
+
+
+DEVELOPER_URL = f"https://discord.com/users/{DEVELOPER_ID}" if DEVELOPER_ID else None
 
 
 class BanAppealView(discord.ui.View):
-    """A persistent link button attached to ban DMs so the recipient can appeal easily."""
+    """Buttons attached to ban DMs.
 
-    def __init__(self) -> None:
-        # timeout=None means the button stays active indefinitely in the DM.
+    - "Submit an appeal" (in-Discord appeal) when `appealable` - temporary and
+      permanent bans - and an appeals channel is configured.
+    - "Appeals server" link when there's no in-Discord option but APPEAL_URL is set.
+    - "Message Developer" for final (blacklist / global) bans, which can't be
+      appealed, so someone who was abused by staff still has somewhere to go.
+    """
+
+    def __init__(
+        self, guild_id: int | None = None, *, appealable: bool = False, contact_developer: bool = False
+    ) -> None:
+        # timeout=None means the buttons stay active indefinitely in the DM.
         super().__init__(timeout=None)
-        if not APPEAL_URL:
-            return  # No appeals server configured - send the DM without a button.
-        self.add_item(
-            discord.ui.Button(
-                label="Appeal your ban",
-                style=discord.ButtonStyle.link,
-                url=APPEAL_URL,
-                emoji="📝",
+        from cogs.appeals import AppealButton, appeals_enabled
+
+        self.has_appeal_button = bool(appealable and guild_id and appeals_enabled())
+        self.has_developer_button = bool(contact_developer and DEVELOPER_URL)
+        if self.has_appeal_button:
+            self.add_item(AppealButton(guild_id))
+        elif appealable and APPEAL_URL:
+            self.add_item(
+                discord.ui.Button(label="Appeals server", style=discord.ButtonStyle.link, url=APPEAL_URL, emoji="\U0001F4DD")
             )
-        )
+        if self.has_developer_button:
+            self.add_item(
+                discord.ui.Button(
+                    label=f"Message Developer ({DEVELOPER_NAME})" if DEVELOPER_NAME else "Message Developer",
+                    style=discord.ButtonStyle.link,
+                    url=DEVELOPER_URL,
+                    emoji="\U0001F4AC",
+                )
+            )
+
+
+def link_view(label: str, url: str | None, emoji: str | None = None) -> discord.ui.View | None:
+    """A single link button, e.g. "Rejoin server" on an unban DM. None if there's no URL."""
+    if not url:
+        return None
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(label=label[:80], style=discord.ButtonStyle.link, url=url, emoji=emoji))
+    return view
 
 
 class ConfirmView(discord.ui.View):
@@ -33,7 +63,8 @@ class ConfirmView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "Only the person who ran this command can respond to this.", ephemeral=True
+                embed=build_notice_embed("Only the person who ran this command can respond to this.", success=False),
+                ephemeral=True,
             )
             return False
         return True
@@ -50,14 +81,14 @@ class ConfirmView(discord.ui.View):
             except discord.HTTPException:
                 pass
 
-    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.secondary, emoji="\U0001F7E2")
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.confirmed = True
         self._disable_all()
         self.stop()
         await interaction.response.edit_message(view=self)
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="\U0001F534")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.confirmed = False
         self._disable_all()
@@ -115,7 +146,8 @@ class CasesPaginatorView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "Only the person who ran this command can page through this.", ephemeral=True
+                embed=build_notice_embed("Only the person who ran this command can page through this.", success=False),
+                ephemeral=True,
             )
             return False
         return True
@@ -142,14 +174,39 @@ class CasesPaginatorView(discord.ui.View):
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
 
-def build_confirm_prompt(description: str) -> discord.Embed:
-    embed = discord.Embed(
-        title="Confirm Global Action",
-        description=description,
-        color=DANGER_COLOR,
-    )
-    embed.set_footer(
-        text="This affects every server the bot is in.",
-        icon_url=embeds_module.BRAND_ICON_URL,
-    )
-    return embed
+# Shown whenever someone is about to blacklist, so the difference from /ban is clear.
+BLACKLIST_MEANING = (
+    "**A blacklist is a final ban:**\n"
+    "\u2022 Permanent - it never expires\n"
+    "\u2022 **Can't be appealed** - no appeal button, and old appeals close\n"
+    "\u2022 They only get a **Message Developer** button, for staff-abuse reports\n"
+    "\u2022 Only **Gov+** can lift it with `/unban`\n"
+    "Use `/ban` instead if they should be able to appeal."
+)
+
+
+def build_confirm_prompt(
+    description: str,
+    *,
+    title: str = "Confirm Global Action",
+    note: str | None = "This affects every server the bot is in.",
+) -> discord.Embed:
+    embed = discord.Embed(title=f"\u26A0\uFE0F  {title}", description=description, color=WARNING_COLOR)
+    embed.add_field(name="Heads up", value=f"{note + ' ' if note else ''}You have 30 seconds.", inline=False)
+    return branded(embed)
+
+
+async def request_confirmation(ctx, description: str, **prompt_options) -> bool:
+    """Ask the command's author to press Confirm. False on Cancel or timeout."""
+    view = ConfirmView(author_id=ctx.author.id)
+    view.message = await ctx.send(embed=build_confirm_prompt(description, **prompt_options), view=view)
+    await view.wait()
+    return bool(view.confirmed)
+
+
+async def safe_defer(ctx, **kwargs) -> None:
+    """ctx.defer() that's a no-op once the interaction has been answered (e.g. by a
+    confirmation prompt) - deferring twice raises InteractionResponded."""
+    if ctx.interaction is not None and ctx.interaction.response.is_done():
+        return
+    await ctx.defer(**kwargs)

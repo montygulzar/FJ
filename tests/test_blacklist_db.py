@@ -23,8 +23,12 @@ async def db(monkeypatch):
     database._pool = None
     database._closing = False
     await database.connect_database()
+    database._settings_cache.clear()
     await database._execute("DELETE FROM global_blacklist", idempotent=True)
     await database._execute("DELETE FROM guild_settings", idempotent=True)
+    await database._execute("DELETE FROM appeals", idempotent=True)
+    await database._execute("DELETE FROM appeal_votes", idempotent=True)
+    await database._execute("DELETE FROM cases", idempotent=True)
     yield
     await database.close_database()
 
@@ -67,3 +71,58 @@ async def test_locked_channel_ids(db):
     assert sorted(await database.get_locked_channel_ids(8)) == [100, 101]
     await database.pop_channel_lock(8, 100)
     assert await database.get_locked_channel_ids(8) == [101]
+
+
+@pytest.mark.asyncio
+async def test_appeal_lifecycle(db):
+    first = await database.create_appeal(9, 1, "please unban me " * 3, None)
+    assert first is not None
+    # Only one open appeal per user per server, enforced by the database.
+    assert await database.create_appeal(9, 1, "again", None) is None
+    assert (await database.get_open_appeal(9, 1))["id"] == first
+    # A different server is a different ban.
+    assert await database.create_appeal(10, 1, "other server", None) is not None
+
+    assert await database.decide_appeal(first, "denied", 50, "no") is True
+    # Two staff clicking at once: only the first decision counts.
+    assert await database.decide_appeal(first, "accepted", 51, None) is False
+    denied = await database.get_last_denied_appeal(9, 1)
+    assert denied["id"] == first and denied["decided_by"] == 50 and denied["decided_at"]
+    assert await database.get_open_appeal(9, 1) is None
+
+    # After a decision a new appeal can be opened.
+    second = await database.create_appeal(9, 1, "second try", "extra")
+    assert second is not None and await database.count_appeals(9, 1) == 2
+    await database.delete_appeal(second)
+    assert await database.count_appeals(9, 1) == 1
+
+    with pytest.raises(ValueError):
+        await database.decide_appeal(first, "maybe", 1, None)
+
+
+@pytest.mark.asyncio
+async def test_latest_ban_case_and_counts(db):
+    await database.add_case(9, 1, 50, "warn", "one")
+    await database.add_case(9, 1, 50, "tempban", "two")
+    await database.add_case(9, 1, 50, "warn", "three")
+    latest = await database.get_latest_ban_case(9, 1)
+    assert latest["action_type"] == "tempban" and latest["reason"] == "two"
+    assert await database.get_case_counts_for_user(9, 1) == {"warn": 2, "tempban": 1}
+    assert await database.get_latest_ban_case(9, 2) is None
+    # A later blacklist supersedes the tempban - that's what makes it unappealable.
+    await database.add_case(9, 1, 50, "blacklist", "four")
+    assert (await database.get_latest_ban_case(9, 1))["action_type"] == "blacklist"
+
+
+@pytest.mark.asyncio
+async def test_votes_cast_switch_and_withdraw(db):
+    appeal = await database.create_appeal(9, 1, "please unban me " * 3, None)
+    await database.cast_vote(appeal, 100, True)
+    await database.cast_vote(appeal, 101, False)
+    await database.cast_vote(appeal, 101, True)      # switches, doesn't double count
+    votes = await database.get_votes(appeal)
+    assert {(v["voter_id"], v["approve"]) for v in votes} == {(100, True), (101, True)}
+    await database.cast_vote(appeal, 100, None)      # withdrawn
+    assert [v["voter_id"] for v in await database.get_votes(appeal)] == [101]
+    await database.delete_appeal(appeal)             # votes go with it
+    assert await database.get_votes(appeal) == []

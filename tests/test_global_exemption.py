@@ -120,13 +120,13 @@ class TestTargetGuildsExemption:
 class TestLocalModerationNotAffected:
     """Verify that exempt guilds still support normal per-guild moderation.
 
-    The exemption is purely in target_guilds() — it doesn't disable
+    The exemption is purely in target_guilds() - it doesn't disable
     any cog or command for the guild. Per-guild commands like /kick, /ban
     etc. don't go through target_guilds at all.
     """
 
     def test_guards_work_in_exempt_guild(self):
-        """guards.refusal_reason doesn't check exemption — local moderation works."""
+        """guards.refusal_reason doesn't check exemption - local moderation works."""
         from guards import refusal_reason
 
         actor = MagicMock()

@@ -107,11 +107,34 @@ if not COMMAND_PREFIX:
 
 BRAND_NAME = os.environ.get("BRAND_NAME", "FJUSA Mod Bot")
 
+# Accent colour for embeds, as hex (e.g. 1D4ED8).
+def _parse_color(name: str, default: int) -> int:
+    raw_value = _env(name).lstrip("#")
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value, 16)
+    except ValueError:
+        _errors.append(f"{name} must be a hex colour like 1D4ED8, got: {raw_value!r}")
+        return default
+    if not 0 <= value <= 0xFFFFFF:
+        _errors.append(f"{name} must be between 000000 and FFFFFF, got: {raw_value!r}")
+        return default
+    return value
+
+
+BRAND_COLOR = _parse_color("BRAND_COLOR", 0x1D4ED8)
+
+# Public image URL for the logo shown in embed corners and footers. When empty the
+# bot's own avatar is used - run /setlogo once to make that avatar assets/fjusa-logo.png.
+LOGO_URL = _env("LOGO_URL")
+
 # Name used in ban DMs ("You have been banned from all FJUSA servers").
 SERVER_DISPLAY_NAME = _env("SERVER_DISPLAY_NAME", "FJUSA")
 
-# Shown when the bot leaves an unapproved server, e.g. "yourname (Discord ID 123...)".
-DEVELOPER_CONTACT = _env("DEVELOPER_CONTACT")
+# Bot developer, shown in the unapproved-server notice and the /help footer.
+DEVELOPER_NAME = _env("DEVELOPER_NAME", "xe2b")
+DEVELOPER_ID = _env("DEVELOPER_ID", "1195765102725582968")
 
 # Invite to the appeals server. Ban DMs show an "Appeal your ban" button when set.
 APPEAL_URL = _env("APPEAL_URL")
@@ -131,6 +154,63 @@ STAFF_ROLE_IDS = _parse_id_list("STAFF_ROLE_IDS")
 STAFF_DIRECTOR_ROLE_IDS = _parse_id_list("STAFF_DIRECTOR_ROLE_IDS")
 GOV_ROLE_IDS = _parse_id_list("GOV_ROLE_IDS")
 DEV_USER_IDS = _parse_id_list("DEV_USER_IDS")
+DEV_ROLE_IDS = _parse_id_list("DEV_ROLE_IDS", "DEVELOPMENT_ROLE_IDS")
+
+# Reasons suggested as you type in /warn, /ban, /mute etc. Separate with |
+REASON_PRESETS = [
+    reason.strip()
+    for reason in _env(
+        "REASON_PRESETS",
+        "Spamming|Harassment|NSFW content|Advertising|Trolling|Disrespecting staff|"
+        "Breaking server rules|Ban evasion|Alt account|Exploiting",
+    ).split("|")
+    if reason.strip()
+]
+
+# Appeals submitted from ban DMs are posted in APPEALS_CHANNEL_ID, where members
+# with APPEAL_VOTER_ROLE_IDS vote to approve or deny the unban. Leave the channel
+# empty to turn in-Discord appeals off (APPEAL_URL still works).
+APPEALS_CHANNEL_ID = _parse_int("APPEALS_CHANNEL_ID", 0, minimum=0)
+# Where "a ban appeal has been sent" alerts and outcomes are posted (optional).
+APPEAL_ALERT_CHANNEL_ID = _parse_int("APPEAL_ALERT_CHANNEL_ID", 0, minimum=0)
+# Roles allowed to vote. Empty = Staff Director+. Must be roles in the server that
+# holds APPEALS_CHANNEL_ID, since that's where the buttons are pressed.
+APPEAL_VOTER_ROLE_IDS = _parse_id_list("APPEAL_VOTER_ROLE_IDS")
+# Votes needed before a decision; the side with more votes then wins (a tie waits
+# for another vote).
+APPEAL_MIN_VOTES = _parse_int("APPEAL_MIN_VOTES", 3, minimum=1, maximum=25)
+# Mention the voter roles in the alert channel when a new appeal arrives.
+APPEAL_PING_VOTERS = _parse_bool("APPEAL_PING_VOTERS", True)
+# Who appeal decisions are signed by ("The FJUSA Ban Team has reviewed your case").
+APPEAL_TEAM_NAME = _env("APPEAL_TEAM_NAME") or f"{SERVER_DISPLAY_NAME} Ban Team"
+# How long someone must wait to appeal again after a denial.
+APPEAL_COOLDOWN_DAYS = _parse_int("APPEAL_COOLDOWN_DAYS", 7, minimum=0, maximum=365)
+
+# --- Log channels -------------------------------------------------------------
+# Each is a comma-separated list of channel IDs, one per server: an event is posted
+# to the channel in the list that belongs to the server it happened in. A kind left
+# empty falls back to /setlogchannel (Mod Logs) or /setserverlogchannel (the rest).
+# The older *_LOG_CHANNEL_IDS names are still accepted.
+LOG_CHANNEL_IDS = {
+    "mod": _parse_id_list("MOD_LOGS_CHANNEL_IDS", "MOD_LOG_CHANNEL_IDS"),
+    "chat": _parse_id_list("CHAT_LOGS_CHANNEL_IDS", "MESSAGE_LOG_CHANNEL_IDS"),
+    "join": _parse_id_list("JOIN_LOGS_CHANNEL_IDS"),
+    "member": _parse_id_list("MEMBER_LOGS_CHANNEL_IDS", "MEMBER_LOG_CHANNEL_IDS"),
+    "voice": _parse_id_list("VOICE_LOGS_CHANNEL_IDS", "VOICE_LOG_CHANNEL_IDS"),
+    "server": _parse_id_list("SERVER_LOGS_CHANNEL_IDS", "SERVER_LOG_CHANNEL_IDS"),
+    "security": _parse_id_list("SECURITY_LOGS_CHANNEL_IDS", "ALERT_LOG_CHANNEL_IDS"),
+}
+
+# Display name and what each kind of log carries.
+LOG_KINDS = {
+    "mod":      ("\U0001F528 Mod Logs",      "Cases, lockdowns and purges"),
+    "chat":     ("\U0001F4AC Chat Logs",     "Edited and deleted messages"),
+    "join":     ("\U0001F6AA Join Logs",     "Members joining and leaving"),
+    "member":   ("\U0001F464 Member Logs",   "Role and nickname changes, bans and unbans"),
+    "voice":    ("\U0001F3A7 Voice Logs",    "Voice joins, moves and leaves"),
+    "server":   ("\U0001F3D7\uFE0F Server Logs", "Channel, role and invite changes"),
+    "security": ("\U0001F6E1\uFE0F Security Logs", "Raid and alt-account alerts"),
+}
 
 # Role given by /mute and removed by /unmute. /tempmute uses Discord's timeout
 # instead and needs no role. The ID must be the same role in every server, or

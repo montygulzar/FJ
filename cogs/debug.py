@@ -5,6 +5,7 @@ is the gateway up, is Postgres reachable and how big is the pool, is the temp-ba
 loop still running, what has been failing recently, and exactly which build is
 running in this container.
 """
+import logging
 import math
 import os
 import platform
@@ -13,12 +14,24 @@ from datetime import timedelta
 from pathlib import Path
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 import config
 import database
 import diagnostics
-from embeds import NEUTRAL_COLOR, base_embed, clamp
+import syscheck as syscheck_module
+from embeds import (
+    DANGER_COLOR,
+    NEUTRAL_COLOR,
+    SUCCESS_COLOR,
+    WARNING_COLOR,
+    base_embed,
+    branded,
+    build_notice_embed,
+    clamp,
+)
+from error_codes import CODES, ERROR, INFO, SEVERITY_ICONS, WARNING, lookup
 from guards import has_tier
 from modlog import check_log_channel
 
@@ -31,9 +44,11 @@ except Exception:
     psutil = None
     _process = None
 
+logger = logging.getLogger("modbot.syscheck")
+
 TICK = "✅"
 CROSS = "❌"
-WARN = "⚠"
+WARN = "⚠️"
 
 
 def format_duration(seconds: float) -> str:
@@ -60,11 +75,71 @@ def format_age(timestamp: float | None) -> str:
     return f"{time.time() - timestamp:.0f}s ago"
 
 
+SEVERITY_ORDER = {ERROR: 0, WARNING: 1, INFO: 2}
+MAX_FINDINGS_SHOWN = 20
+
+
+def build_report_embed(report: "syscheck_module.Report") -> discord.Embed:
+    errors, warnings, infos = report.count(ERROR), report.count(WARNING), report.count(INFO)
+    if errors:
+        color, headline = DANGER_COLOR, "Problems found - fix the \U0001F534 errors first."
+    elif warnings:
+        color, headline = WARNING_COLOR, "Working, with a few things worth fixing."
+    else:
+        color, headline = SUCCESS_COLOR, "All systems go."
+    embed = discord.Embed(
+        title="\U0001FA7A  System Check",
+        description=(
+            f"{headline}\n\n"
+            f"\u2705 **{report.passed}** passed  \u2022  "
+            f"{SEVERITY_ICONS[ERROR]} **{errors}**  \u2022  "
+            f"{SEVERITY_ICONS[WARNING]} **{warnings}**  \u2022  "
+            f"{SEVERITY_ICONS[INFO]} **{infos}**  (of {report.checks_run} checks)"
+        ),
+        color=color,
+    )
+    findings = sorted(report.findings, key=lambda f: (SEVERITY_ORDER[f.severity], f.code))
+    for finding in findings[:MAX_FINDINGS_SHOWN]:
+        entry = CODES[finding.code]
+        embed.add_field(
+            name=f"{SEVERITY_ICONS[entry.severity]}  {finding.code}  \u2022  {entry.title}",
+            value=clamp(f"{finding.detail}\n**Fix:** {entry.fix}" if finding.detail else f"**Fix:** {entry.fix}", 1024),
+            inline=False,
+        )
+    if len(findings) > MAX_FINDINGS_SHOWN:
+        embed.add_field(
+            name=f"...and {len(findings) - MAX_FINDINGS_SHOWN} more",
+            value="The full list is in the bot's logs (`docker compose logs`).",
+            inline=False,
+        )
+    return branded(embed, footer_prefix="Quote the code when asking for help")
+
+
+def build_code_embed(code: str) -> discord.Embed:
+    entry = lookup(code)
+    if entry is None:
+        return build_notice_embed(f"`{code}` isn't a known error code. Codes look like `FJ-DB-001`.", success=False)
+    color = {ERROR: DANGER_COLOR, WARNING: WARNING_COLOR, INFO: NEUTRAL_COLOR}[entry.severity]
+    embed = discord.Embed(title=f"{SEVERITY_ICONS[entry.severity]}  {code.upper()}", description=f"**{entry.title}**", color=color)
+    embed.add_field(name="Severity", value=entry.severity.title(), inline=True)
+    embed.add_field(name="How to fix", value=entry.fix, inline=False)
+    return branded(embed)
+
+
+async def error_code_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    typed = current.strip().upper()
+    return [
+        app_commands.Choice(name=f"{code} - {entry.title}"[:100], value=code)
+        for code, entry in CODES.items()
+        if typed in code or typed.lower() in entry.title.lower()
+    ][:25]
+
+
 class Debug(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.hybrid_command(name="debug", description="Full diagnostic report. Development tier.")
+    @commands.hybrid_command(name="debug", description="Full diagnostic report (Dev only)")
     @has_tier("dev")
     async def debug(self, ctx: commands.Context):
         await ctx.defer(ephemeral=True)
@@ -75,6 +150,21 @@ class Debug(commands.Cog):
             self._activity_embed(),
         ]
         await ctx.send(embeds=embeds, ephemeral=True)
+
+    @commands.hybrid_command(name="syscheck", description="Check every command and system; problems get an error code")
+    @app_commands.describe(code="Look up one error code, e.g. FJ-DB-001")
+    @app_commands.autocomplete(code=error_code_autocomplete)
+    @has_tier("dev")
+    async def syscheck(self, ctx: commands.Context, code: str | None = None):
+        if code:
+            await ctx.send(embed=build_code_embed(code), ephemeral=True)
+            return
+
+        await ctx.defer(ephemeral=True)
+        report = await syscheck_module.run_all(self.bot)
+        for finding in report.findings:
+            logger.warning("syscheck %s %s: %s", finding.code, CODES[finding.code].title, finding.detail)
+        await ctx.send(embed=build_report_embed(report), ephemeral=True)
 
     @commands.hybrid_command(name="health", description="Quick liveness summary: database, gateway, uptime.")
     @has_tier("dev")
@@ -89,7 +179,7 @@ class Debug(commands.Cog):
         overall_ok = database_ok and gateway_ok
         embed = base_embed(
             f"{TICK if overall_ok else WARN}  Health",
-            0x3BA55D if overall_ok else 0xF5A524,
+            SUCCESS_COLOR if overall_ok else WARNING_COLOR,
         )
         embed.add_field(name="Gateway", value=f"{TICK if gateway_ok else CROSS} {latency}", inline=True)
         embed.add_field(name="Database", value=f"{TICK if database_ok else CROSS} {clamp(database_detail, 100)}", inline=True)
@@ -110,7 +200,7 @@ class Debug(commands.Cog):
         await ctx.send(embed=embed, ephemeral=True)
 
     def _overview_embed(self) -> discord.Embed:
-        embed = base_embed("Debug - Overview", NEUTRAL_COLOR)
+        embed = base_embed("\U0001F6E0\uFE0F  Debug - Overview", NEUTRAL_COLOR)
 
         version_lines = [
             f"Version `{config.APP_VERSION}`",
@@ -165,7 +255,7 @@ class Debug(commands.Cog):
         return embed
 
     async def _health_embed(self, guild: discord.Guild | None) -> discord.Embed:
-        embed = base_embed("Debug - Health", NEUTRAL_COLOR)
+        embed = base_embed("\U0001FA7A  Debug - Health", NEUTRAL_COLOR)
 
         gateway_ok = self.bot.is_ready() and not self.bot.is_closed()
         embed.add_field(
@@ -231,7 +321,7 @@ class Debug(commands.Cog):
         return embed
 
     def _config_embed(self) -> discord.Embed:
-        embed = base_embed("Debug - Config", NEUTRAL_COLOR)
+        embed = base_embed("\u2699\uFE0F  Debug - Config", NEUTRAL_COLOR)
 
         # Presence and counts only - never the actual token, credentials or raw ID values.
         embed.add_field(
@@ -262,7 +352,10 @@ class Debug(commands.Cog):
                 f"Staff roles: **{len(config.STAFF_ROLE_IDS)}**\n"
                 f"Staff Director roles: **{len(config.STAFF_DIRECTOR_ROLE_IDS)}**\n"
                 f"Gov roles: **{len(config.GOV_ROLE_IDS)}**\n"
-                f"Dev users: **{len(config.DEV_USER_IDS)}**\n"
+                f"Dev users/roles: **{len(config.DEV_USER_IDS)}** / **{len(config.DEV_ROLE_IDS)}**\n"
+                f"Appeals: **{'on' if config.APPEALS_CHANNEL_ID else 'off'}**"
+                f" (min votes {config.APPEAL_MIN_VOTES}, voter roles {len(config.APPEAL_VOTER_ROLE_IDS) or 'Staff Director+'})\n"
+                f"Env log channels: **{sum(len(ids) for ids in config.LOG_CHANNEL_IDS.values())}**\n"
                 f"Mute role: **{'set' if config.MUTE_ROLE_ID else 'not set'}**\n"
                 f"Approved servers: **{len(config.APPROVED_GUILD_IDS) or 'all (no allowlist)'}**\n"
                 f"Global-exempt servers: **{len(config.GLOBAL_ACTION_EXEMPT_GUILD_IDS) or 'none'}**\n"
@@ -282,7 +375,7 @@ class Debug(commands.Cog):
         return embed
 
     def _activity_embed(self) -> discord.Embed:
-        embed = base_embed("Debug - Activity", NEUTRAL_COLOR)
+        embed = base_embed("\U0001F4CA  Debug - Activity", NEUTRAL_COLOR)
 
         top_commands, total_invocations, total_errors = diagnostics.get_command_stats()
         if top_commands:

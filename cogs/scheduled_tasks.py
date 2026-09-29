@@ -5,7 +5,8 @@ import discord
 from discord.ext import commands, tasks
 
 from database import get_expired_temp_bans, remove_temp_ban
-from modlog import record_case
+from modlog import record_case_full
+from notify import dm_unban, resolve_user
 
 logger = logging.getLogger("modbot.scheduled_tasks")
 
@@ -81,13 +82,14 @@ class ScheduledTasks(commands.Cog):
         if self.bot.user is None:
             return
 
-        user = self.bot.get_user(user_id)
+        user = await resolve_user(self.bot, user_id)
         if user is None:
-            try:
-                user = await self.bot.fetch_user(user_id)
-            except discord.HTTPException:
-                return  # Ban is lifted; only the case-log entry is lost.
-        await record_case(guild, user, self.bot.user, "unban", "Temporary ban expired")
+            return  # Ban is lifted; only the case-log entry is lost.
+        _, case_id = await record_case_full(guild, user, self.bot.user, "unban", "Temporary ban expired")
+        await dm_unban(
+            user, guild, "Temporary ban expired", case_id=case_id,
+            note="\u23F3 Your temporary ban has ended. You're welcome back - please follow the rules.",
+        )
 
     @expire_temp_bans.before_loop
     async def before_expire_temp_bans(self) -> None:

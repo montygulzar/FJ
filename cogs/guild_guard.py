@@ -3,39 +3,48 @@ import logging
 import discord
 from discord.ext import commands
 
-from config import APPROVED_GUILD_IDS, DEVELOPER_CONTACT, LEAVE_UNAPPROVED_GUILDS, OWNER_IDS, SERVER_DISPLAY_NAME
+from config import (
+    APPROVED_GUILD_IDS,
+    DEVELOPER_ID,
+    DEVELOPER_NAME,
+    LEAVE_UNAPPROVED_GUILDS,
+    OWNER_IDS,
+    SERVER_DISPLAY_NAME,
+)
+from embeds import DANGER_COLOR, SUCCESS_COLOR, branded, logo_url
+from modlog import try_dm
+from notify import create_invite, resolve_user
 
 logger = logging.getLogger("modbot.guild_guard")
 
-UNAPPROVED_SERVER_MESSAGE = (
-    f"This server is not an approved {SERVER_DISPLAY_NAME} server.\n"
-    "If you believe this is a mistake, please DM the developer."
-    + (f"\n\n**Developer:** {DEVELOPER_CONTACT}" if DEVELOPER_CONTACT else "")
-)
+
+def build_unapproved_notice(*, leaving: bool) -> discord.Embed:
+    """What the server itself sees when the bot joins somewhere it isn't approved."""
+    embed = discord.Embed(
+        title="\u26D4  Unapproved Server",
+        description=(
+            f"This server is not an approved **{SERVER_DISPLAY_NAME}** server"
+            + (", so I'm leaving." if leaving else ".")
+            + "\nIf you believe this is a mistake, please DM the developer."
+        ),
+        color=DANGER_COLOR,
+    )
+    if logo_url():
+        embed.set_thumbnail(url=logo_url())
+    if DEVELOPER_NAME:
+        embed.add_field(name="Developer", value=DEVELOPER_NAME, inline=True)
+    if DEVELOPER_ID:
+        embed.add_field(name="Discord ID", value=f"`{DEVELOPER_ID}`", inline=True)
+    return branded(embed)
 
 
 async def resolve_invite(guild: discord.Guild) -> str | None:
-    """Try to generate a 24-hour invite from the first channel the bot can use."""
-    if guild.me is None:
-        return None
-    for channel in guild.text_channels:
-        if not channel.permissions_for(guild.me).create_instant_invite:
-            continue
-        try:
-            invite = await channel.create_invite(
-                max_age=86400,
-                max_uses=1,
-                unique=True,
-                reason="Unapproved server alert - requested by bot owner",
-            )
-            return invite.url
-        except discord.HTTPException:
-            continue
-    return None
+    """A 24-hour, single-use invite so owners can inspect an unapproved server."""
+    return await create_invite(guild, reason="Unapproved server alert - requested by bot owner")
 
 
-async def post_in_server(guild: discord.Guild, message: str) -> None:
-    """Post a message in the server's system channel, or the first writable text channel."""
+async def post_in_server(guild: discord.Guild, embed: discord.Embed) -> None:
+    """Post an embed in the server's system channel, or the first writable text channel."""
     candidates = []
     if guild.system_channel is not None:
         candidates.append(guild.system_channel)
@@ -48,7 +57,7 @@ async def post_in_server(guild: discord.Guild, message: str) -> None:
         if not channel.permissions_for(guild.me).send_messages:
             continue
         try:
-            await channel.send(message)
+            await channel.send(embed=embed)
             return
         except discord.HTTPException:
             continue
@@ -77,11 +86,9 @@ def build_unapproved_embed(
     *,
     leaving: bool,
 ) -> discord.Embed:
-    embed = discord.Embed(
-        title="Unapproved Server Join",
-        color=0xDC2626,
-        timestamp=discord.utils.utcnow(),
-    )
+    embed = discord.Embed(title="\U0001F6A8  Unapproved Server Join", color=DANGER_COLOR)
+    if guild.icon is not None:
+        embed.set_thumbnail(url=guild.icon.url)
 
     server_value = f"{guild.name}\n`{guild.id}`"
     embed.add_field(name="Server", value=server_value, inline=True)
@@ -102,8 +109,12 @@ def build_unapproved_embed(
         inline=False,
     )
 
-    embed.set_footer(text="Leaving automatically." if leaving else "Auto-leave disabled - bot will remain.")
-    return embed
+    embed.add_field(
+        name="Action",
+        value="\U0001F6AA Leaving automatically" if leaving else "\u23F8\uFE0F Auto-leave is off - staying",
+        inline=False,
+    )
+    return branded(embed)
 
 
 class GuildGuard(commands.Cog):
@@ -120,11 +131,9 @@ class GuildGuard(commands.Cog):
 
     async def alert_owners(self, embed: discord.Embed) -> None:
         for owner_id in OWNER_IDS:
-            try:
-                owner = self.bot.get_user(owner_id) or await self.bot.fetch_user(owner_id)
-                await owner.send(embed=embed)
-            except discord.HTTPException:
-                continue
+            owner = await resolve_user(self.bot, owner_id)
+            if owner is not None:
+                await try_dm(owner, embed)
 
     async def _leave(self, guild: discord.Guild) -> None:
         try:
@@ -161,7 +170,7 @@ class GuildGuard(commands.Cog):
         inviter = await get_inviter(guild, self.bot.user.id)
 
         # Post notice in the server so the server owner knows why the bot left.
-        await post_in_server(guild, UNAPPROVED_SERVER_MESSAGE)
+        await post_in_server(guild, build_unapproved_notice(leaving=LEAVE_UNAPPROVED_GUILDS))
 
         # DM all owners with the formatted embed.
         embed = build_unapproved_embed(
@@ -173,19 +182,12 @@ class GuildGuard(commands.Cog):
             await self._leave(guild)
 
     async def _alert_approved(self, guild: discord.Guild) -> None:
-        embed = discord.Embed(
-            title="Joined Approved Server",
-            color=0x16A34A,
-            timestamp=discord.utils.utcnow(),
-        )
+        embed = discord.Embed(title="\u2705  Joined Approved Server", color=SUCCESS_COLOR)
+        if guild.icon is not None:
+            embed.set_thumbnail(url=guild.icon.url)
         embed.add_field(name="Server", value=f"{guild.name}\n`{guild.id}`", inline=True)
         embed.add_field(name="Members", value=str(guild.member_count or 0), inline=True)
-        for owner_id in OWNER_IDS:
-            try:
-                owner = self.bot.get_user(owner_id) or await self.bot.fetch_user(owner_id)
-                await owner.send(embed=embed)
-            except discord.HTTPException:
-                continue
+        await self.alert_owners(branded(embed))
 
 
 async def setup(bot: commands.Bot):

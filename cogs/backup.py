@@ -1,9 +1,9 @@
 """Server backup and restore.
 
 /backupserver  - Snapshots all roles, channels, and permissions into a JSON file
-                 and attaches it to the channel. Requires Ownership tier.
+                 and attaches it to the channel. Requires Gov tier.
 /restorebackup - Reads the most recent backup file and recreates any roles or
-                 channels that no longer exist. Requires Ownership tier.
+                 channels that no longer exist. Requires Gov tier.
 
 Backups are intentionally JSON files (not a database table) so they can be kept
 offline and applied to a fresh server without needing database access.
@@ -18,11 +18,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-import embeds as embeds_module
-from config import BRAND_NAME
-from embeds import DANGER_COLOR, NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, build_notice_embed, clamp
+from embeds import NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, branded, build_notice_embed, clamp
 from guards import has_tier
-from views import ConfirmView
+from views import request_confirmation
 
 
 def _perms_to_dict(perms: discord.Permissions) -> dict[str, bool]:
@@ -226,7 +224,7 @@ class Backup(commands.Cog):
             value="Use `/restorebackup` and attach this JSON file. Missing roles and channels will be recreated.",
             inline=False,
         )
-        embed.set_footer(text=BRAND_NAME, icon_url=embeds_module.BRAND_ICON_URL)
+        branded(embed)
 
         await ctx.send(embed=embed, file=attachment)
 
@@ -248,31 +246,27 @@ class Backup(commands.Cog):
             return
 
         try:
-            raw = await backup_file.read()
-            snapshot = json.loads(raw)
-            assert "roles" in snapshot and "channels" in snapshot
-        except Exception:
+            snapshot = json.loads(await backup_file.read())
+        except (discord.HTTPException, ValueError):
+            snapshot = None
+        # An explicit check, not assert: asserts vanish under `python -O`.
+        if not isinstance(snapshot, dict) or "roles" not in snapshot or "channels" not in snapshot:
             await ctx.send(embed=build_notice_embed("Could not parse the backup file. Make sure it was created by /backupserver.", success=False))
             return
 
         meta = snapshot.get("meta", {})
         original_guild = meta.get("guild_name", "unknown")
-        taken_at = meta.get("taken_at", "unknown")[:10]
+        taken_at = str(meta.get("taken_at", "unknown"))[:10]
 
-        view = ConfirmView(author_id=ctx.author.id)
-        prompt = discord.Embed(
+        confirmed = await request_confirmation(
+            ctx,
+            f"This will recreate any **missing** roles and channels from the `{original_guild}` "
+            f"backup taken on **{taken_at}**.\n\n"
+            "Existing roles and channels are **not** deleted or modified.",
             title="Confirm Restore",
-            description=(
-                f"This will recreate any **missing** roles and channels from the `{original_guild}` "
-                f"backup taken on **{taken_at}**.\n\n"
-                "Existing roles and channels are **not** deleted or modified."
-            ),
-            color=DANGER_COLOR,
+            note=None,
         )
-        view.message = await ctx.send(embed=prompt, view=view)
-        await view.wait()
-
-        if not view.confirmed:
+        if not confirmed:
             await ctx.send(embed=build_notice_embed("Restore cancelled.", success=False))
             return
 
@@ -306,7 +300,7 @@ class Backup(commands.Cog):
                 value=clamp("\n".join(roles_failed + channels_failed)),
                 inline=False,
             )
-        embed.set_footer(text=BRAND_NAME, icon_url=embeds_module.BRAND_ICON_URL)
+        branded(embed)
         await ctx.send(embed=embed)
 
 

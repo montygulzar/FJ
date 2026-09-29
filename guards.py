@@ -4,6 +4,7 @@ from discord.ext import commands
 from config import (
     APPROVED_GUILD_IDS,
     BLOCKED_USER_IDS,
+    DEV_ROLE_IDS,
     DEV_USER_IDS,
     GOV_ROLE_IDS,
     OWNER_IDS,
@@ -20,6 +21,7 @@ _TIER_ROLE_IDS: dict[str, set[int]] = {
     "staff": STAFF_ROLE_IDS,
     "staff_director": STAFF_DIRECTOR_ROLE_IDS,
     "gov": GOV_ROLE_IDS,
+    "dev": DEV_ROLE_IDS,
 }
 
 # Tiers checked by user ID instead of role ID.
@@ -31,7 +33,7 @@ _TIER_LABELS: dict[str, str] = {
     "staff": "Staff",
     "staff_director": "Staff Director",
     "gov": "Gov",
-    "dev": "Development",
+    "dev": "Dev",
 }
 
 _TIER_DENIALS: dict[str, str] = {
@@ -60,17 +62,40 @@ def has_tier(tier: str):
             return True
         if ctx.guild is None:
             return False
-
-        author_role_ids = {role.id for role in ctx.author.roles}
-        for t in _TIERS[tier_index:]:
-            if t in _TIER_USER_IDS and ctx.author.id in _TIER_USER_IDS[t]:
-                return True
-            if t in _TIER_ROLE_IDS and author_role_ids & _TIER_ROLE_IDS[t]:
-                return True
-
+        actual = member_tier_index(ctx.author)
+        if actual is not None and actual >= tier_index:
+            return True
         raise commands.CheckFailure(denial)
 
+    # Read by /help to show each person only the commands they can run.
+    predicate.fjusa_tier = tier
     return commands.check(predicate)
+
+
+def member_tier_index(user: discord.abc.User) -> int | None:
+    """Position in _TIERS of the highest tier this user holds, or None for no tier.
+
+    Owners count as the top tier. Roles are only visible on a Member, so a plain User
+    (e.g. in DMs) can only qualify through OWNER_IDS or the user-ID tiers.
+    """
+    if user.id in OWNER_IDS:
+        return len(_TIERS) - 1
+    role_ids = {role.id for role in getattr(user, "roles", ())}
+    for index in range(len(_TIERS) - 1, -1, -1):
+        tier = _TIERS[index]
+        if tier in _TIER_USER_IDS and user.id in _TIER_USER_IDS[tier]:
+            return index
+        if tier in _TIER_ROLE_IDS and role_ids & _TIER_ROLE_IDS[tier]:
+            return index
+    return None
+
+
+def tier_index(tier: str) -> int:
+    return _TIERS.index(tier)
+
+
+def tier_label(index: int | None) -> str:
+    return "No staff tier" if index is None else _TIER_LABELS[_TIERS[index]]
 
 
 def from_approved_guild():
@@ -85,19 +110,6 @@ def from_approved_guild():
         if ctx.guild is not None and ctx.guild.id in APPROVED_GUILD_IDS:
             return True
         raise commands.CheckFailure("Global commands can only be used from an approved server.")
-
-    return commands.check(predicate)
-
-
-def is_bot_owner():
-    """Command check restricting a command to OWNER_IDS.
-
-    Kept for backward compatibility. New commands should use
-    has_tier("dev") instead.
-    """
-
-    async def predicate(ctx: commands.Context) -> bool:
-        return ctx.author.id in OWNER_IDS
 
     return commands.check(predicate)
 

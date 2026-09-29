@@ -1,9 +1,9 @@
 # Privacy Policy
 
 **Application:** FJUSA Mod Bot
-**Operator / Data Controller:** <your name>
-**Contact:** <your Discord username and ID>
-**Last updated:** 27/07/26
+**Operator / Data Controller:** xe2b
+**Contact:** DM xe2b on Discord | ID-1195765102725582968
+**Last updated:** 29/09/26
 
 This policy explains what data the Application collects, why, how long it is kept, and what rights you have over it. It applies to everyone who interacts with the Application in any Discord server where it is present.
 
@@ -24,6 +24,8 @@ The Application stores the following, and nothing else:
 - the date and time of the action
 
 **Global blacklist.** For users blacklisted across all servers, we store their user ID, the moderator's user ID, the reason, and when they were added. The record is deleted when they are removed from the blacklist or globally unbanned.
+
+**Ban appeals.** When you submit an appeal, we store your user ID, the server ID, your answers, and the outcome (who decided it, when, and any note). Your answers are shown to that server's staff.
 
 **Server configuration.** Per server, we store the configured mod-log and announcement channel IDs, lockdown role ID, new-account alert threshold, and automatic warn-escalation thresholds.
 
@@ -76,6 +78,7 @@ The server is located in [COUNTRY]. Where this is outside the UK or EEA, transfe
 - **Moderation records:** retained for an indefinite amount of time from the date of the action, then deleted, unless a moderator deletes the record sooner.
 - **Scheduled action records:** deleted as soon as the action completes.
 - **Channel lock records:** deleted as soon as the channel is unlocked.
+- **Appeals:** retained as part of the moderation record.
 - **Global blacklist entries:** retained until removed from the blacklist or globally unbanned.
 - **Server configuration:** retained while the Application is a member of the server, and deleted on request after it leaves.
 
@@ -83,7 +86,7 @@ The server is located in [COUNTRY]. Where this is outside the UK or EEA, transfe
 
 Under UK GDPR you have the right to request access to the data we hold about you, correction of inaccurate data, erasure, restriction of processing, and to object to processing based on legitimate interests. You also have the right to lodge a complaint with the Information Commissioner's Office (ico.org.uk).
 
-To exercise any of these rights, contact us at the operator, ID-1285998518213017663. We will respond within one month. You will need to provide your Discord user ID so we can locate your records.
+To exercise any of these rights, DM xe2b on Discord (ID 1195765102725582968). We will respond within one month. You will need to provide your Discord user ID so we can locate your records.
 
 Note that erasing a moderation record removes the record of an enforcement decision. Where we have a compelling legitimate ground to retain a record (for example, an active ban that would otherwise be unenforceable), we may refuse an erasure request and will explain why.
 

@@ -13,7 +13,7 @@ docker network: fjusa-net
 └── fjusa-postgres   PostgreSQL 16, managed separately
 ```
 
-The bot reaches the database at the hostname `fjusa-postgres` — containers on the
+The bot reaches the database at the hostname `fjusa-postgres` - containers on the
 same user-defined Docker network resolve each other by container name. Do not use
 `localhost` in `DATABASE_URL`: inside the bot container that points at the bot.
 
@@ -38,7 +38,7 @@ same user-defined Docker network resolve each other by container name. Do not us
    Already have a network your other containers use? Put its name in `.env` as
    `DOCKER_NETWORK=` and use it below instead.
 
-3. **Create the database container** (once — skip if you already run Postgres on
+3. **Create the database container** (once - skip if you already run Postgres on
    that network, and point `DATABASE_URL` at it instead)
 
    ```bash
@@ -63,7 +63,7 @@ same user-defined Docker network resolve each other by container name. Do not us
    ```
 
    The schema is created on first start. On an existing database, missing tables,
-   indexes and columns are added in place — existing rows and case IDs are never
+   indexes and columns are added in place - existing rows and case IDs are never
    modified or reset.
 
 ## Routine deployment
@@ -79,7 +79,7 @@ docker compose logs -f --tail=50
 `docker compose up -d` recreates the container only when the image or config
 changed. The database container is untouched.
 
-To confirm which build is live, run `/debug` in Discord — it reports the version
+To confirm which build is live, run `/debug` in Discord - it reports the version
 and commit stamped into the image at build time.
 
 ## Verifying a deployment
@@ -117,7 +117,7 @@ Connected as FJUSA Mod Bot (…) across N guild(s)
 | `/ready`  | Readiness. 200 only when Discord **and** the database are up; 503 otherwise. |
 
 Docker's `HEALTHCHECK` uses `/ready`, so a container with a failing database shows
-as `unhealthy` in `docker ps` without being restarted — restarting would not fix a
+as `unhealthy` in `docker ps` without being restarted - restarting would not fix a
 dependency outage, and the bot reconnects on its own.
 
 ## Global action exemptions
@@ -132,7 +132,7 @@ Use this for an **Appeals server**: a globally banned user must still be able to
 remain in or join the Appeals server so they can appeal their punishment.
 
 - Normal per-guild moderation commands (`/kick`, `/ban`, `/mute`, etc.) still work
-  inside exempt guilds — the exemption applies only to the global/cross-server
+  inside exempt guilds - the exemption applies only to the global/cross-server
   propagation.
 - Because exempt guilds never receive a global action, reversing that global action
   (e.g. `globalunban`) does not touch them either, so any unrelated local moderation
@@ -208,9 +208,9 @@ build runs against a newer database. It simply ignores columns it does not know.
 |---|---|
 | `Configuration error - the bot cannot start` (exit 2) | Every problem found is listed. Fix `.env`, then `docker compose up -d --force-recreate`. |
 | `Database not reachable ... retrying` repeating | Postgres is down, or not on `fjusa-net`. Check `docker ps` and `docker network inspect fjusa-net`. |
-| `password authentication failed` | Wrong credentials in `DATABASE_URL`. Note that a password with `@ / : #` must be percent-encoded — or use the `POSTGRES_*` variables, which encode it for you. |
+| `password authentication failed` | Wrong credentials in `DATABASE_URL`. Note that a password with `@ / : #` must be percent-encoded - or use the `POSTGRES_*` variables, which encode it for you. |
 | `database "fjusa" does not exist` | Create it: `docker exec -it fjusa-postgres createdb -U fjusa_bot fjusa`. |
 | `Discord rejected BOT_TOKEN` | Regenerate the token in the Discord developer portal and update `.env`. |
 | `Privileged intents are not enabled` | Enable Server Members and Message Content in the developer portal. |
 | Slash commands missing | Sync is rate-limited; it retries on the next restart. Prefix commands keep working. |
-| Container shows `unhealthy` | `/ready` is returning 503. Check `docker compose logs` — usually the database. |
+| Container shows `unhealthy` | `/ready` is returning 503. Check `docker compose logs` - usually the database. |
