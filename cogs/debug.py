@@ -48,7 +48,7 @@ logger = logging.getLogger("modbot.syscheck")
 
 TICK = "✅"
 CROSS = "❌"
-WARN = "⚠"
+WARN = "⚠️"
 
 
 def format_duration(seconds: float) -> str:
@@ -179,7 +179,7 @@ class Debug(commands.Cog):
         overall_ok = database_ok and gateway_ok
         embed = base_embed(
             f"{TICK if overall_ok else WARN}  Health",
-            0x3BA55D if overall_ok else 0xF5A524,
+            SUCCESS_COLOR if overall_ok else WARNING_COLOR,
         )
         embed.add_field(name="Gateway", value=f"{TICK if gateway_ok else CROSS} {latency}", inline=True)
         embed.add_field(name="Database", value=f"{TICK if database_ok else CROSS} {clamp(database_detail, 100)}", inline=True)
@@ -200,7 +200,7 @@ class Debug(commands.Cog):
         await ctx.send(embed=embed, ephemeral=True)
 
     def _overview_embed(self) -> discord.Embed:
-        embed = base_embed("Debug - Overview", NEUTRAL_COLOR)
+        embed = base_embed("\U0001F6E0\uFE0F  Debug - Overview", NEUTRAL_COLOR)
 
         version_lines = [
             f"Version `{config.APP_VERSION}`",
@@ -255,7 +255,7 @@ class Debug(commands.Cog):
         return embed
 
     async def _health_embed(self, guild: discord.Guild | None) -> discord.Embed:
-        embed = base_embed("Debug - Health", NEUTRAL_COLOR)
+        embed = base_embed("\U0001FA7A  Debug - Health", NEUTRAL_COLOR)
 
         gateway_ok = self.bot.is_ready() and not self.bot.is_closed()
         embed.add_field(
@@ -321,7 +321,7 @@ class Debug(commands.Cog):
         return embed
 
     def _config_embed(self) -> discord.Embed:
-        embed = base_embed("Debug - Config", NEUTRAL_COLOR)
+        embed = base_embed("\u2699\uFE0F  Debug - Config", NEUTRAL_COLOR)
 
         # Presence and counts only - never the actual token, credentials or raw ID values.
         embed.add_field(
@@ -375,7 +375,7 @@ class Debug(commands.Cog):
         return embed
 
     def _activity_embed(self) -> discord.Embed:
-        embed = base_embed("Debug - Activity", NEUTRAL_COLOR)
+        embed = base_embed("\U0001F4CA  Debug - Activity", NEUTRAL_COLOR)
 
         top_commands, total_invocations, total_errors = diagnostics.get_command_stats()
         if top_commands:

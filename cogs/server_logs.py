@@ -13,20 +13,29 @@ from __future__ import annotations
 import discord
 from discord.ext import commands
 
-from embeds import base_embed, branded
+from embeds import (
+    DANGER_COLOR,
+    MUTED_COLOR,
+    NEUTRAL_COLOR,
+    SUCCESS_COLOR,
+    WARNING_COLOR,
+    base_embed,
+    branded,
+)
 from modlog import post_to_server_log_channel
 
-COLOR_JOIN     = 0x3BA55D
-COLOR_LEAVE    = 0x747F8D
-COLOR_DELETE   = 0xD93A3A
-COLOR_EDIT     = 0xF5A524
-COLOR_VOICE    = 0x5865F2
-COLOR_ROLE     = 0xEB459E
-COLOR_CHANNEL  = 0x57F287
-COLOR_BAN      = 0xA32828
-COLOR_UNBAN    = 0x3BA55D
-COLOR_INVITE   = 0x9B59B6
-COLOR_NICKNAME = 0xFEE75C
+# Log colours come from the shared palette so every log looks like part of one bot.
+COLOR_JOIN     = SUCCESS_COLOR
+COLOR_LEAVE    = MUTED_COLOR
+COLOR_DELETE   = DANGER_COLOR
+COLOR_EDIT     = WARNING_COLOR
+COLOR_VOICE    = NEUTRAL_COLOR
+COLOR_ROLE     = 0x8B5CF6
+COLOR_CHANNEL  = 0x14B8A6
+COLOR_BAN      = 0x991B1B
+COLOR_UNBAN    = SUCCESS_COLOR
+COLOR_INVITE   = 0x8B5CF6
+COLOR_NICKNAME = WARNING_COLOR
 
 
 def _base(title: str, color: int, description: str | None = None) -> discord.Embed:
@@ -60,7 +69,7 @@ class ServerLogs(commands.Cog):
         if message.guild is None or message.author.bot:
             return
 
-        embed = _base("\U0001F5D1  Message Deleted", COLOR_DELETE)
+        embed = _base("\U0001F5D1\uFE0F  Message Deleted", COLOR_DELETE)
         _author(embed, message.author)
         embed.add_field(name="Author", value=f"{message.author.mention} `{message.author.id}`", inline=True)
         embed.add_field(name="Channel", value=message.channel.mention, inline=True)
@@ -79,7 +88,7 @@ class ServerLogs(commands.Cog):
         if not messages or messages[0].guild is None:
             return
         non_bot = [m for m in messages if not m.author.bot]
-        embed = _base("\U0001F5D1  Bulk Message Delete", COLOR_DELETE)
+        embed = _base("\U0001F5D1\uFE0F  Bulk Message Delete", COLOR_DELETE)
         embed.add_field(name="Channel", value=messages[0].channel.mention, inline=True)
         embed.add_field(name="User messages removed", value=str(len(non_bot)), inline=True)
         embed.add_field(name="Total removed", value=str(len(messages)), inline=True)
@@ -92,7 +101,7 @@ class ServerLogs(commands.Cog):
         if before.content == after.content:
             return
 
-        embed = _base("\u270F  Message Edited", COLOR_EDIT)
+        embed = _base("\u270F\uFE0F  Message Edited", COLOR_EDIT)
         _author(embed, before.author)
         embed.add_field(name="Author", value=f"{before.author.mention} `{before.author.id}`", inline=True)
         embed.add_field(name="Channel", value=before.channel.mention, inline=True)
@@ -122,7 +131,7 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Member #", value=str(member.guild.member_count), inline=True)
         if age_days < 7:
             embed.add_field(
-                name="\u26A0  New account warning",
+                name="\u26A0\uFE0F  New Account Warning",
                 value=f"This account is only **{age_days} day(s)** old.",
                 inline=False,
             )
@@ -130,7 +139,7 @@ class ServerLogs(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
-        embed = _base("\U0001F4A8  Member Left", COLOR_LEAVE)
+        embed = _base("\U0001F44B  Member Left", COLOR_LEAVE)
         _author(embed, member)
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.add_field(name="User", value=f"{member.mention}\n`{member.id}`", inline=True)
@@ -146,7 +155,7 @@ class ServerLogs(commands.Cog):
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User) -> None:
         reason, moderator = await _get_audit_entry(guild, user.id, discord.AuditLogAction.ban)
-        embed = _base("\U0001F6D1  Member Banned", COLOR_BAN)
+        embed = _base("\U0001F528  Member Banned", COLOR_BAN)
         _author(embed, user)
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.add_field(name="User", value=f"{user.mention}\n`{user.id}`", inline=True)
@@ -174,7 +183,7 @@ class ServerLogs(commands.Cog):
         guild = before.guild
 
         if before.nick != after.nick:
-            embed = _base("\U0001F3F7  Nickname Changed", COLOR_NICKNAME)
+            embed = _base("\U0001F3F7\uFE0F  Nickname Changed", COLOR_NICKNAME)
             _author(embed, after)
             embed.add_field(name="User", value=f"{after.mention}\n`{after.id}`", inline=True)
             embed.add_field(name="Before", value=before.nick or "*none*", inline=True)
@@ -184,7 +193,7 @@ class ServerLogs(commands.Cog):
         added = [r for r in after.roles if r not in before.roles and r != guild.default_role]
         removed = [r for r in before.roles if r not in after.roles and r != guild.default_role]
         if added or removed:
-            embed = _base("\U0001F6E1  Member Roles Updated", COLOR_ROLE)
+            embed = _base("\U0001F3AD  Member Roles Updated", COLOR_ROLE)
             _author(embed, after)
             embed.add_field(name="User", value=f"{after.mention}\n`{after.id}`", inline=True)
             if added:
@@ -265,7 +274,7 @@ class ServerLogs(commands.Cog):
         if not changes:
             return
 
-        embed = _base("\u270F  Channel Updated", COLOR_CHANNEL)
+        embed = _base("\u270F\uFE0F  Channel Updated", COLOR_CHANNEL)
         embed.add_field(name="Channel", value=after.mention, inline=False)
         for name, old, new in changes:
             embed.add_field(name=name, value=f"{old} \u2192 {new}", inline=False)
@@ -277,7 +286,7 @@ class ServerLogs(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_role_create(self, role: discord.Role) -> None:
-        embed = _base("\U0001F6E1  Role Created", COLOR_ROLE)
+        embed = _base("\U0001F3F7\uFE0F  Role Created", COLOR_ROLE)
         embed.add_field(name="Name", value=role.mention, inline=True)
         embed.add_field(name="Color", value=str(role.color), inline=True)
         embed.add_field(name="ID", value=f"`{role.id}`", inline=True)
@@ -285,7 +294,7 @@ class ServerLogs(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_role_delete(self, role: discord.Role) -> None:
-        embed = _base("\U0001F6E1  Role Deleted", COLOR_DELETE)
+        embed = _base("\U0001F3F7\uFE0F  Role Deleted", COLOR_DELETE)
         embed.add_field(name="Name", value=f"@{role.name}", inline=True)
         embed.add_field(name="Color", value=str(role.color), inline=True)
         embed.add_field(name="ID", value=f"`{role.id}`", inline=True)
@@ -305,7 +314,7 @@ class ServerLogs(commands.Cog):
         if not changes:
             return
 
-        embed = _base("\U0001F6E1  Role Updated", COLOR_ROLE)
+        embed = _base("\U0001F3F7\uFE0F  Role Updated", COLOR_ROLE)
         embed.add_field(name="Role", value=after.mention, inline=False)
         for name, old, new in changes:
             embed.add_field(name=name, value=f"{old} \u2192 {new}", inline=False)

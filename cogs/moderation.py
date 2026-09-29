@@ -158,7 +158,7 @@ class Moderation(commands.Cog):
             return
         if kind == "blacklist" and not await request_confirmation(
             ctx, f"Blacklist **{user}** from **{ctx.guild.name}**?\n\n{BLACKLIST_MEANING}",
-            title="Confirm blacklist", note=None,
+            title="Confirm Blacklist", note=None,
         ):
             await ctx.send(embed=build_notice_embed("Blacklist cancelled - nothing was done.", success=False))
             return

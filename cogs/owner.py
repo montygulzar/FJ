@@ -38,7 +38,7 @@ class Owner(commands.Cog):
             chunk = guilds[chunk_start : chunk_start + GUILDS_PER_EMBED]
 
             embed = base_embed(
-                f"Servers ({len(guilds)})",
+                f"\U0001F5A5\uFE0F  Servers ({len(guilds)})",
                 NEUTRAL_COLOR,
                 f"**{total_members:,}** members across all servers."
                 if chunk_start == 0
@@ -108,7 +108,7 @@ class Owner(commands.Cog):
             return
 
         set_brand_icon(self.bot.user.display_avatar.url)
-        embed = build_notice_embed("The bot's avatar is now the FJUSA logo - it appears on every embed.", title="Logo updated")
+        embed = build_notice_embed("The bot's avatar is now the FJUSA logo - it appears on every embed.", title="Logo Updated")
         embed.set_thumbnail(url=self.bot.user.display_avatar.url)
         await ctx.send(embed=embed, ephemeral=True)
 

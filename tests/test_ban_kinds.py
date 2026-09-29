@@ -101,7 +101,7 @@ class TestConfirmationHelpers:
     def test_blacklist_prompt_explains_the_meaning(self):
         from views import BLACKLIST_MEANING, build_confirm_prompt
 
-        embed = build_confirm_prompt(f"Blacklist x?\n\n{BLACKLIST_MEANING}", title="Confirm blacklist", note=None)
-        assert "Confirm blacklist" in embed.title
+        embed = build_confirm_prompt(f"Blacklist x?\n\n{BLACKLIST_MEANING}", title="Confirm Blacklist", note=None)
+        assert "Confirm Blacklist" in embed.title
         assert "Can't be appealed" in embed.description and "/ban" in embed.description
         assert embed.fields[0].value == "You have 30 seconds."

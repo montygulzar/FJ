@@ -117,7 +117,7 @@ class CaseManagement(commands.Cog):
             await ctx.send(embed=build_notice_embed(f"No case #{case_id} in this server.", success=False))
             return
 
-        embed = base_embed(f"Case #{case_id} Edited", NEUTRAL_COLOR)
+        embed = base_embed(f"\u270F\uFE0F  Case #{case_id} Edited", NEUTRAL_COLOR)
         embed.add_field(name="New reason", value=clamp(new_reason), inline=False)
         embed.add_field(name="Edited by", value=ctx.author.mention, inline=True)
         await ctx.send(embed=embed)
@@ -132,7 +132,7 @@ class CaseManagement(commands.Cog):
             await ctx.send(embed=build_notice_embed(f"No case #{case_id} in this server.", success=False))
             return
 
-        embed = base_embed(f"Case #{case_id} Deleted", MUTED_COLOR)
+        embed = base_embed(f"\U0001F5D1\uFE0F  Case #{case_id} Deleted", MUTED_COLOR)
         embed.add_field(name="Deleted by", value=ctx.author.mention, inline=True)
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)
@@ -156,7 +156,7 @@ class CaseManagement(commands.Cog):
         buffer.seek(0)
 
         export_file = discord.File(io.BytesIO(buffer.getvalue().encode()), filename=f"cases-{ctx.guild.id}.csv")
-        embed = base_embed("Case Export", NEUTRAL_COLOR, f"{len(case_rows)} case(s) attached as CSV.")
+        embed = base_embed("\U0001F4E4  Case Export", NEUTRAL_COLOR, f"{len(case_rows)} case(s) attached as CSV.")
         await ctx.send(embed=embed, file=export_file)
 
     @commands.hybrid_command(name="modstats", description="Moderation activity overview for this server")

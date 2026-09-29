@@ -347,7 +347,7 @@ class GlobalModeration(commands.Cog):
             f"({format_timestamp(row['created_at'], 'R')})"
             for row in entries[start : start + BLACKLIST_PAGE_SIZE]
         ]
-        embed = base_embed("Global Blacklist", DANGER_COLOR, clamp("\n".join(lines), 4096))
+        embed = base_embed("\U0001F4CB  Global Blacklist", DANGER_COLOR, clamp("\n".join(lines), 4096))
         branded(embed, footer_prefix=f"Page {page} of {last_page}  \u2022  {len(entries)} total")
         await ctx.send(embed=embed)
 
@@ -400,7 +400,7 @@ class GlobalModeration(commands.Cog):
         if entry is None:
             await ctx.send(embed=build_notice_embed(f"**{user}** is not blacklisted."))
             return
-        embed = base_embed("Blacklisted", DANGER_COLOR, f"**{user}**\n`{user.id}`")
+        embed = base_embed("\u26D4  Blacklisted", DANGER_COLOR, f"**{user}**\n`{user.id}`")
         embed.add_field(name="Reason", value=clamp(entry["reason"]), inline=False)
         embed.add_field(name="Added by", value=f"<@{entry['moderator_id']}>", inline=True)
         embed.add_field(name="Added", value=format_timestamp(entry["created_at"], "R"), inline=True)
@@ -440,7 +440,7 @@ class GlobalModeration(commands.Cog):
             except discord.HTTPException:
                 failed.append(f"{guild.name} (can't post in #{getattr(channel, 'name', channel_id)})")
 
-        summary = base_embed("Global Announcement Sent", SUCCESS_COLOR if posted else DANGER_COLOR)
+        summary = base_embed("\U0001F4E3  Global Announcement Sent", SUCCESS_COLOR if posted else DANGER_COLOR)
         summary.add_field(
             name=f"Posted in {len(posted)} server(s)",
             value=clamp("\n".join(f"- {name}" for name in posted), empty="*None*"),
@@ -491,12 +491,12 @@ class GlobalModeration(commands.Cog):
             if channel_failures:
                 failed.append(f"{guild.name} ({channel_failures} channel(s))")
 
-            log_embed = base_embed("Global Lockdown", MUTED_COLOR, f"{channel_count} channel(s) locked.")
+            log_embed = base_embed("\U0001F512  Global Lockdown", MUTED_COLOR, f"{channel_count} channel(s) locked.")
             log_embed.add_field(name="Reason", value=clamp(reason), inline=False)
             log_embed.add_field(name="Locked by", value=f"{ctx.author} (`{ctx.author.id}`)", inline=True)
             await post_to_log_channel(guild, log_embed)
 
-        summary = base_embed("Global Lockdown", MUTED_COLOR)
+        summary = base_embed("\U0001F512  Global Lockdown", MUTED_COLOR)
         summary.add_field(name="Locked", value=clamp("\n".join(f"- {n}" for n in locked), empty="*Nothing to lock*"), inline=False)
         if failed:
             summary.add_field(name="Missing permissions in", value=clamp("\n".join(f"- {n}" for n in failed)), inline=False)
@@ -525,13 +525,13 @@ class GlobalModeration(commands.Cog):
 
             if channel_count:
                 unlocked.append(f"{guild.name} ({channel_count} channel(s))")
-                log_embed = base_embed("Global Unlock", SUCCESS_COLOR, f"{channel_count} channel(s) unlocked.")
+                log_embed = base_embed("\U0001F513  Global Unlock", SUCCESS_COLOR, f"{channel_count} channel(s) unlocked.")
                 log_embed.add_field(name="Unlocked by", value=f"{ctx.author} (`{ctx.author.id}`)", inline=True)
                 await post_to_log_channel(guild, log_embed)
             if channel_failures:
                 failed.append(f"{guild.name} ({channel_failures} channel(s))")
 
-        summary = base_embed("Global Unlock", SUCCESS_COLOR)
+        summary = base_embed("\U0001F513  Global Unlock", SUCCESS_COLOR)
         summary.add_field(name="Unlocked", value=clamp("\n".join(f"- {n}" for n in unlocked), empty="*Nothing was locked*"), inline=False)
         if failed:
             summary.add_field(name="Couldn't fully restore", value=clamp("\n".join(f"- {n}" for n in failed)), inline=False)

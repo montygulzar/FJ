@@ -275,7 +275,7 @@ async def post_appeal_alert(bot, appeal_id: int, user: discord.abc.User, guild, 
     if channel is None:
         return
     embed = discord.Embed(
-        title=f"\U0001F4E8  New ban appeal #{appeal_id}",
+        title=f"\U0001F4E8  New Ban Appeal #{appeal_id}",
         description=(
             f"A ban appeal has been sent to {message.channel.mention}.\n"
             f"**[Jump to the appeal]({message.jump_url})** to cast your vote."
@@ -435,7 +435,7 @@ class AppealModal(discord.ui.Modal, title="Ban Appeal"):
         confirmation = build_notice_embed(
             f"Your appeal to **{guild.name}** has been sent to staff. "
             f"The **{APPEAL_TEAM_NAME}** will review your case, and I'll DM you the result.",
-            title=f"Appeal #{appeal_id} submitted",
+            title=f"Appeal #{appeal_id} Submitted",
         )
         await interaction.followup.send(embed=confirmation, ephemeral=True)
 

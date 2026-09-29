@@ -263,7 +263,7 @@ class Backup(commands.Cog):
             f"This will recreate any **missing** roles and channels from the `{original_guild}` "
             f"backup taken on **{taken_at}**.\n\n"
             "Existing roles and channels are **not** deleted or modified.",
-            title="Confirm restore",
+            title="Confirm Restore",
             note=None,
         )
         if not confirmed:

@@ -188,7 +188,7 @@ BLACKLIST_MEANING = (
 def build_confirm_prompt(
     description: str,
     *,
-    title: str = "Confirm global action",
+    title: str = "Confirm Global Action",
     note: str | None = "This affects every server the bot is in.",
 ) -> discord.Embed:
     embed = discord.Embed(title=f"\u26A0\uFE0F  {title}", description=description, color=WARNING_COLOR)

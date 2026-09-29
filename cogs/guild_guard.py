@@ -86,7 +86,7 @@ def build_unapproved_embed(
     *,
     leaving: bool,
 ) -> discord.Embed:
-    embed = discord.Embed(title="\U0001F6A8  Unapproved server join", color=DANGER_COLOR)
+    embed = discord.Embed(title="\U0001F6A8  Unapproved Server Join", color=DANGER_COLOR)
     if guild.icon is not None:
         embed.set_thumbnail(url=guild.icon.url)
 
@@ -182,7 +182,7 @@ class GuildGuard(commands.Cog):
             await self._leave(guild)
 
     async def _alert_approved(self, guild: discord.Guild) -> None:
-        embed = discord.Embed(title="\u2705  Joined approved server", color=SUCCESS_COLOR)
+        embed = discord.Embed(title="\u2705  Joined Approved Server", color=SUCCESS_COLOR)
         if guild.icon is not None:
             embed.set_thumbnail(url=guild.icon.url)
         embed.add_field(name="Server", value=f"{guild.name}\n`{guild.id}`", inline=True)

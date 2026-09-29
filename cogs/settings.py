@@ -64,7 +64,7 @@ class Settings(commands.Cog):
             else "Not set, falls back to @everyone"
         )
 
-        embed = base_embed(f"Settings  \u2022  {ctx.guild.name}", NEUTRAL_COLOR)
+        embed = base_embed(f"\u2699\uFE0F  Settings  \u2022  {ctx.guild.name}", NEUTRAL_COLOR)
         embed.add_field(name="Announcement channel", value=announce_display, inline=True)
         routing = []
         for category in LOG_CATEGORIES:
@@ -98,7 +98,7 @@ class Settings(commands.Cog):
         ok, detail = await check_log_channel(ctx.guild)
         message = f"Mod-log channel set to {channel.mention}."
         if not ok:
-            message += f"\n\u26A0 {detail}"
+            message += f"\n\u26A0\uFE0F {detail}"
         await ctx.send(embed=build_notice_embed(message, success=ok))
 
     @commands.hybrid_command(
@@ -121,7 +121,7 @@ class Settings(commands.Cog):
         ok, detail = await check_server_log_channel(ctx.guild)
         message = f"Server-log channel set to {channel.mention}."
         if not ok:
-            message += f"\n\u26A0 {detail}"
+            message += f"\n\u26A0\uFE0F {detail}"
         await ctx.send(embed=build_notice_embed(message, success=ok))
 
     @commands.hybrid_command(
@@ -165,7 +165,7 @@ class Settings(commands.Cog):
                 lines.append(f"\U0001F7E2 **{label}** - {channel.mention}")
             except discord.HTTPException as error:
                 lines.append(f"\U0001F534 **{label}** - {channel.mention} (`{error}`)")
-        await ctx.send(embed=base_embed("\U0001F9EA  Log test", NEUTRAL_COLOR, "\n".join(lines)))
+        await ctx.send(embed=base_embed("\U0001F9EA  Log Test", NEUTRAL_COLOR, "\n".join(lines)))
 
     @commands.hybrid_command(
         name="setraidprotection",
@@ -243,7 +243,7 @@ class Settings(commands.Cog):
             ctx.guild.id, mute_at or None, mute_minutes if mute_at else None, kick_at or None, ban_at or None
         )
 
-        embed = base_embed("Warn Escalation Updated", NEUTRAL_COLOR)
+        embed = base_embed("\U0001F4C8  Warn Escalation Updated", NEUTRAL_COLOR)
         embed.add_field(name="Mute", value=describe_threshold(mute_at, f" for {mute_minutes}m"), inline=True)
         embed.add_field(name="Kick", value=describe_threshold(kick_at), inline=True)
         embed.add_field(name="Ban", value=describe_threshold(ban_at), inline=True)

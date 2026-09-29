@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands
 
-from embeds import branded
+from embeds import DANGER_COLOR, SUCCESS_COLOR, WARNING_COLOR, branded
 from modlog import post_to_server_log_channel
 
 logger = logging.getLogger("modbot.alt_detector")
@@ -31,9 +31,9 @@ MEDIUM_RISK = 30
 # reconnects don't turn into repeated invite fetches for every guild.
 CACHE_REFRESH_SECONDS = 300.0
 
-COLOR_HIGH   = 0xD93A3A
-COLOR_MEDIUM = 0xF5A524
-COLOR_LOW    = 0x3BA55D
+COLOR_HIGH   = DANGER_COLOR
+COLOR_MEDIUM = WARNING_COLOR
+COLOR_LOW    = SUCCESS_COLOR
 
 # Username has 4+ digits in a row (common alt pattern like "user12345")
 _DIGIT_RUN = re.compile(r"\d{4,}")
