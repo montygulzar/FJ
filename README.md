@@ -131,7 +131,11 @@ server:
 | 🛡️ Security Logs | `SECURITY_LOGS_CHANNEL_IDS` | Raid and alt-account alerts |
 
 For each event, the bot uses whichever channel in the list belongs to that server,
-and tags the entry with its log name. Anything left empty falls back to
+and tags the entry with its log name. Logs say **who did it and to whom**, e.g.
+**"xe2b (ID 1195...) gave @Staff to hf0u (ID 564...)"**. This covers role and
+nickname changes, kicks (a kick is logged as a kick, not a leave), bans, unbans
+and channel/role changes. The bot reads this from Discord's audit log, so it needs
+the **View Audit Log** permission. Anything left empty falls back to
 `/setlogchannel` (Mod Logs) or `/setserverlogchannel` (everything else).
 `/settings` shows where each kind goes, and `/testlog` sends a test to all of them.
 

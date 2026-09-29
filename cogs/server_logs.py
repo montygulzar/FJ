@@ -10,6 +10,8 @@ mod-log channel so a single-channel setup keeps working.
 """
 from __future__ import annotations
 
+import asyncio
+
 import discord
 from discord.ext import commands
 
@@ -139,43 +141,43 @@ class ServerLogs(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
-        embed = _base("\U0001F44B  Member Left", COLOR_LEAVE)
+        # A kick looks exactly like a leave from the gateway; only the audit log tells them apart.
+        kicker, reason = await find_actor(member.guild, discord.AuditLogAction.kick, member.id)
+        if kicker is not None:
+            embed = _base("\U0001F462  Member Kicked", COLOR_BAN, f"{who(kicker)} kicked {who(member)}.")
+        else:
+            embed = _base("\U0001F44B  Member Left", COLOR_LEAVE, f"{who(member)} left the server.")
         _author(embed, member)
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.add_field(name="User", value=f"{member.mention}\n`{member.id}`", inline=True)
         if member.joined_at:
             embed.add_field(name="Joined", value=discord.utils.format_dt(member.joined_at, "R"), inline=True)
+        add_actor(embed, kicker, reason, "Kicked by")
         roles = [r.mention for r in member.roles if r != member.guild.default_role]
         if roles:
             # Unclamped this overflows the 1024-char field limit on role-heavy members,
             # and Discord then rejects the entire embed - losing the log entry outright.
             embed.add_field(name="Roles", value=_short(", ".join(roles)), inline=False)
-        await post_to_server_log_channel(member.guild, embed, "join")
+        await post_to_server_log_channel(member.guild, embed, "member" if kicker else "join")
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User) -> None:
-        reason, moderator = await _get_audit_entry(guild, user.id, discord.AuditLogAction.ban)
-        embed = _base("\U0001F528  Member Banned", COLOR_BAN)
+        moderator, reason = await find_actor(guild, discord.AuditLogAction.ban, user.id)
+        embed = _base("\U0001F528  Member Banned", COLOR_BAN, f"{who(moderator)} banned {who(user)}.")
         _author(embed, user)
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.add_field(name="User", value=f"{user.mention}\n`{user.id}`", inline=True)
-        if moderator:
-            embed.add_field(name="Banned by", value=moderator.mention, inline=True)
-        if reason:
-            embed.add_field(name="Reason", value=_short(reason), inline=False)
+        add_actor(embed, moderator, reason, "Banned by")
         await post_to_server_log_channel(guild, embed, "member")
 
     @commands.Cog.listener()
     async def on_member_unban(self, guild: discord.Guild, user: discord.User) -> None:
-        reason, moderator = await _get_audit_entry(guild, user.id, discord.AuditLogAction.unban)
-        embed = _base("\U0001F513  Member Unbanned", COLOR_UNBAN)
+        moderator, reason = await find_actor(guild, discord.AuditLogAction.unban, user.id)
+        embed = _base("\U0001F513  Member Unbanned", COLOR_UNBAN, f"{who(moderator)} unbanned {who(user)}.")
         _author(embed, user)
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.add_field(name="User", value=f"{user.mention}\n`{user.id}`", inline=True)
-        if moderator:
-            embed.add_field(name="Unbanned by", value=moderator.mention, inline=True)
-        if reason:
-            embed.add_field(name="Reason", value=_short(reason), inline=False)
+        add_actor(embed, moderator, reason, "Unbanned by")
         await post_to_server_log_channel(guild, embed, "member")
 
     @commands.Cog.listener()
@@ -183,23 +185,33 @@ class ServerLogs(commands.Cog):
         guild = before.guild
 
         if before.nick != after.nick:
-            embed = _base("\U0001F3F7\uFE0F  Nickname Changed", COLOR_NICKNAME)
+            changer, reason = await find_actor(guild, discord.AuditLogAction.member_update, after.id)
+            if changer is None or changer.id == after.id:
+                sentence = f"{who(after)} changed their nickname."
+            else:
+                sentence = f"{who(changer)} changed {who(after)}'s nickname."
+            embed = _base("\U0001F3F7\uFE0F  Nickname Changed", COLOR_NICKNAME, sentence)
             _author(embed, after)
-            embed.add_field(name="User", value=f"{after.mention}\n`{after.id}`", inline=True)
             embed.add_field(name="Before", value=before.nick or "*none*", inline=True)
             embed.add_field(name="After", value=after.nick or "*none*", inline=True)
+            if changer is not None and changer.id != after.id:
+                add_actor(embed, changer, reason, "Changed by")
             await post_to_server_log_channel(guild, embed, "member")
 
         added = [r for r in after.roles if r not in before.roles and r != guild.default_role]
         removed = [r for r in before.roles if r not in after.roles and r != guild.default_role]
         if added or removed:
-            embed = _base("\U0001F3AD  Member Roles Updated", COLOR_ROLE)
-            _author(embed, after)
-            embed.add_field(name="User", value=f"{after.mention}\n`{after.id}`", inline=True)
+            giver, reason = await find_actor(guild, discord.AuditLogAction.member_role_update, after.id)
+            # "xe2b (ID 1195...) gave @Role to hf0u (ID 564...)"
+            lines = []
             if added:
-                embed.add_field(name="Added", value=_short(", ".join(r.mention for r in added)), inline=False)
+                lines.append(f"{who(giver)} gave {', '.join(r.mention for r in added)} to {who(after)}")
             if removed:
-                embed.add_field(name="Removed", value=_short(", ".join(r.mention for r in removed)), inline=False)
+                lines.append(f"{who(giver)} removed {', '.join(r.mention for r in removed)} from {who(after)}")
+            embed = _base("\U0001F3AD  Member Roles Updated", COLOR_ROLE, _short("\n".join(lines), 4000))
+            _author(embed, after)
+            embed.add_field(name="Recipient", value=f"{after.mention}\n`{after.id}`", inline=True)
+            add_actor(embed, giver, reason, "Given by" if added and not removed else "Changed by")
             await post_to_server_log_channel(guild, embed, "member")
 
     # -----------------------------------------------------------------------
@@ -244,6 +256,8 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Type", value=str(channel.type).replace("_", " ").title(), inline=True)
         if hasattr(channel, "category") and channel.category:
             embed.add_field(name="Category", value=channel.category.name, inline=True)
+        actor, reason = await find_actor(channel.guild, discord.AuditLogAction.channel_create, channel.id)
+        add_actor(embed, actor, reason)
         await post_to_server_log_channel(channel.guild, embed, "server")
 
     @commands.Cog.listener()
@@ -254,6 +268,8 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="ID", value=f"`{channel.id}`", inline=True)
         if hasattr(channel, "category") and channel.category:
             embed.add_field(name="Category", value=channel.category.name, inline=True)
+        actor, reason = await find_actor(channel.guild, discord.AuditLogAction.channel_delete, channel.id)
+        add_actor(embed, actor, reason)
         await post_to_server_log_channel(channel.guild, embed, "server")
 
     @commands.Cog.listener()
@@ -278,6 +294,8 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Channel", value=after.mention, inline=False)
         for name, old, new in changes:
             embed.add_field(name=name, value=f"{old} \u2192 {new}", inline=False)
+        actor, reason = await find_actor(after.guild, discord.AuditLogAction.channel_update, after.id)
+        add_actor(embed, actor, reason)
         await post_to_server_log_channel(after.guild, embed, "server")
 
     # -----------------------------------------------------------------------
@@ -290,6 +308,8 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Name", value=role.mention, inline=True)
         embed.add_field(name="Color", value=str(role.color), inline=True)
         embed.add_field(name="ID", value=f"`{role.id}`", inline=True)
+        actor, reason = await find_actor(role.guild, discord.AuditLogAction.role_create, role.id)
+        add_actor(embed, actor, reason)
         await post_to_server_log_channel(role.guild, embed, "server")
 
     @commands.Cog.listener()
@@ -298,6 +318,8 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Name", value=f"@{role.name}", inline=True)
         embed.add_field(name="Color", value=str(role.color), inline=True)
         embed.add_field(name="ID", value=f"`{role.id}`", inline=True)
+        actor, reason = await find_actor(role.guild, discord.AuditLogAction.role_delete, role.id)
+        add_actor(embed, actor, reason)
         await post_to_server_log_channel(role.guild, embed, "server")
 
     @commands.Cog.listener()
@@ -318,6 +340,8 @@ class ServerLogs(commands.Cog):
         embed.add_field(name="Role", value=after.mention, inline=False)
         for name, old, new in changes:
             embed.add_field(name=name, value=f"{old} \u2192 {new}", inline=False)
+        actor, reason = await find_actor(after.guild, discord.AuditLogAction.role_update, after.id)
+        add_actor(embed, actor, reason)
         await post_to_server_log_channel(after.guild, embed, "server")
 
     # -----------------------------------------------------------------------
@@ -353,20 +377,41 @@ class ServerLogs(commands.Cog):
 # Audit log helpers
 # ---------------------------------------------------------------------------
 
-async def _get_audit_entry(
-    guild: discord.Guild,
-    target_id: int,
-    action: discord.AuditLogAction,
-) -> tuple[str | None, discord.abc.User | None]:
+# Discord writes the audit log a moment after the gateway event arrives, and an old
+# entry for the same target must not be mistaken for this one.
+AUDIT_LOG_DELAY = 1.5
+AUDIT_LOG_MAX_AGE = 20
+
+
+async def find_actor(
+    guild: discord.Guild, action: discord.AuditLogAction, target_id: int
+) -> tuple[discord.abc.User | None, str | None]:
+    """Who just did `action` to `target_id`, and their reason - (None, None) if unknown."""
     if not guild.me or not guild.me.guild_permissions.view_audit_log:
         return None, None
+    await asyncio.sleep(AUDIT_LOG_DELAY)
     try:
-        async for entry in guild.audit_logs(limit=5, action=action):
-            if entry.target and entry.target.id == target_id:
-                return entry.reason, entry.user
+        async for entry in guild.audit_logs(limit=10, action=action):
+            age = (discord.utils.utcnow() - entry.created_at).total_seconds()
+            if age > AUDIT_LOG_MAX_AGE:
+                break  # Newest first, so everything after this is older still.
+            if entry.target is not None and entry.target.id == target_id:
+                return entry.user, entry.reason
     except discord.HTTPException:
         pass
     return None, None
+
+
+def who(user: discord.abc.User | None) -> str:
+    """'**xe2b** (ID `1195...`)' - name plus ID, which survives renames."""
+    return f"**{user}** (ID `{user.id}`)" if user is not None else "*Someone*"
+
+
+def add_actor(embed: discord.Embed, actor: discord.abc.User | None, reason: str | None, label: str = "By") -> None:
+    if actor is not None:
+        embed.add_field(name=label, value=f"{actor.mention}\n`{actor.id}`", inline=True)
+    if reason:
+        embed.add_field(name="Reason", value=_short(reason, 500), inline=False)
 
 
 async def setup(bot: commands.Bot):
