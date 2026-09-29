@@ -70,7 +70,7 @@ from embeds import (
 )
 from guards import is_blocked, member_tier_index, tier_index
 from modlog import record_case_full, try_dm
-from notify import rejoin_invite
+from notify import rejoin_invite, resolve_user
 from views import link_view
 
 logger = logging.getLogger("modbot.appeals")
@@ -317,20 +317,10 @@ async def post_decision_alert(bot, appeal_id: int, accepted: bool, approve: int,
         logger.warning("Could not post decision alert for #%s: %s", appeal_id, error)
 
 
-async def _resolve_user(bot, user_id: int):
-    user = bot.get_user(user_id)
-    if user is None:
-        try:
-            user = await bot.fetch_user(user_id)
-        except discord.HTTPException:
-            return None
-    return user
-
-
 async def carry_out(bot: commands.Bot, appeal, accepted: bool, approve: int, deny: int) -> str | None:
     """Act on a finished vote: unban or not, record it, DM the user. Returns a note for staff."""
     guild = bot.get_guild(appeal["guild_id"])
-    user = await _resolve_user(bot, appeal["user_id"])
+    user = await resolve_user(bot, appeal["user_id"])
     tally_text = f"staff vote {approve}-{deny}"
 
     if not accepted:

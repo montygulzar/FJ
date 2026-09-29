@@ -362,13 +362,13 @@ async def _run(operation, *, idempotent: bool):
     drops mid-query is ambiguous: PostgreSQL may or may not have committed the
     statement before the client lost contact. Non-idempotent writes (an INSERT that
     allocates a case number, a DELETE ... RETURNING that consumes saved state) are
-    therefore only retried when the failure happened while acquiring the connection —
+    therefore only retried when the failure happened while acquiring the connection -
     that is, before any statement could have run. If the failure is ambiguous (after
     acquire, during execution), the operation is NOT retried and DatabaseUnavailable
     is raised so the caller can surface a safe error to the user.
 
-    Callers that are naturally safe to repeat — UPSERTs, DELETEs by primary key,
-    idempotent SELECTs — should pass idempotent=True so they benefit from retry.
+    Callers that are naturally safe to repeat - UPSERTs, DELETEs by primary key,
+    idempotent SELECTs - should pass idempotent=True so they benefit from retry.
     """
     attempt = 0
     while True:
@@ -903,7 +903,7 @@ async def get_locked_channel_ids(guild_id: int) -> list[int]:
 async def check_connection() -> tuple[bool, str]:
     """Round-trip a trivial query. Returns (ok, latency or error text).
 
-    Error text is the exception class name only — the full message may contain
+    Error text is the exception class name only - the full message may contain
     connection details that should not reach an HTTP endpoint or a Discord embed.
     """
     if not is_connected():

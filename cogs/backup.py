@@ -18,9 +18,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from embeds import NEUTRAL_COLOR, SUCCESS_COLOR, WARNING_COLOR, base_embed, branded, build_notice_embed, clamp
+from embeds import NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, branded, build_notice_embed, clamp
 from guards import has_tier
-from views import ConfirmView
+from views import request_confirmation
 
 
 def _perms_to_dict(perms: discord.Permissions) -> dict[str, bool]:
@@ -246,31 +246,27 @@ class Backup(commands.Cog):
             return
 
         try:
-            raw = await backup_file.read()
-            snapshot = json.loads(raw)
-            assert "roles" in snapshot and "channels" in snapshot
-        except Exception:
+            snapshot = json.loads(await backup_file.read())
+        except (discord.HTTPException, ValueError):
+            snapshot = None
+        # An explicit check, not assert: asserts vanish under `python -O`.
+        if not isinstance(snapshot, dict) or "roles" not in snapshot or "channels" not in snapshot:
             await ctx.send(embed=build_notice_embed("Could not parse the backup file. Make sure it was created by /backupserver.", success=False))
             return
 
         meta = snapshot.get("meta", {})
         original_guild = meta.get("guild_name", "unknown")
-        taken_at = meta.get("taken_at", "unknown")[:10]
+        taken_at = str(meta.get("taken_at", "unknown"))[:10]
 
-        view = ConfirmView(author_id=ctx.author.id)
-        prompt = discord.Embed(
-            title="\u26A0\uFE0F  Confirm restore",
-            description=(
-                f"This will recreate any **missing** roles and channels from the `{original_guild}` "
-                f"backup taken on **{taken_at}**.\n\n"
-                "Existing roles and channels are **not** deleted or modified."
-            ),
-            color=WARNING_COLOR,
+        confirmed = await request_confirmation(
+            ctx,
+            f"This will recreate any **missing** roles and channels from the `{original_guild}` "
+            f"backup taken on **{taken_at}**.\n\n"
+            "Existing roles and channels are **not** deleted or modified.",
+            title="Confirm restore",
+            note=None,
         )
-        view.message = await ctx.send(embed=branded(prompt), view=view)
-        await view.wait()
-
-        if not view.confirmed:
+        if not confirmed:
             await ctx.send(embed=build_notice_embed("Restore cancelled.", success=False))
             return
 

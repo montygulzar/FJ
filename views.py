@@ -174,11 +174,39 @@ class CasesPaginatorView(discord.ui.View):
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
 
-def build_confirm_prompt(description: str) -> discord.Embed:
-    embed = discord.Embed(
-        title="\u26A0\uFE0F  Confirm global action",
-        description=description,
-        color=WARNING_COLOR,
-    )
-    embed.add_field(name="Heads up", value="This affects every server the bot is in. You have 30 seconds.", inline=False)
+# Shown whenever someone is about to blacklist, so the difference from /ban is clear.
+BLACKLIST_MEANING = (
+    "**A blacklist is a final ban:**\n"
+    "\u2022 Permanent - it never expires\n"
+    "\u2022 **Can't be appealed** - no appeal button, and old appeals close\n"
+    "\u2022 They only get a **Message Developer** button, for staff-abuse reports\n"
+    "\u2022 Only **Gov+** can lift it with `/unban`\n"
+    "Use `/ban` instead if they should be able to appeal."
+)
+
+
+def build_confirm_prompt(
+    description: str,
+    *,
+    title: str = "Confirm global action",
+    note: str | None = "This affects every server the bot is in.",
+) -> discord.Embed:
+    embed = discord.Embed(title=f"\u26A0\uFE0F  {title}", description=description, color=WARNING_COLOR)
+    embed.add_field(name="Heads up", value=f"{note + ' ' if note else ''}You have 30 seconds.", inline=False)
     return branded(embed)
+
+
+async def request_confirmation(ctx, description: str, **prompt_options) -> bool:
+    """Ask the command's author to press Confirm. False on Cancel or timeout."""
+    view = ConfirmView(author_id=ctx.author.id)
+    view.message = await ctx.send(embed=build_confirm_prompt(description, **prompt_options), view=view)
+    await view.wait()
+    return bool(view.confirmed)
+
+
+async def safe_defer(ctx, **kwargs) -> None:
+    """ctx.defer() that's a no-op once the interaction has been answered (e.g. by a
+    confirmation prompt) - deferring twice raises InteractionResponded."""
+    if ctx.interaction is not None and ctx.interaction.response.is_done():
+        return
+    await ctx.defer(**kwargs)

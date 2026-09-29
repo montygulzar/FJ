@@ -20,7 +20,7 @@ from guards import has_tier, member_tier_index, refusal_reason, tier_index
 from modlog import record_case_full, try_dm
 from notify import dm_action, dm_unban
 from reasons import reason_autocomplete
-from views import BanAppealView
+from views import BLACKLIST_MEANING, BanAppealView, request_confirmation, safe_defer
 
 MAX_TIMEOUT = timedelta(days=28)  # Discord's own cap on a timeout
 MAX_TEMPBAN = timedelta(days=365)
@@ -156,8 +156,14 @@ class Moderation(commands.Cog):
             # or let it expire.
             await refuse(ctx, f"**{user}** is blacklisted here. A Gov+ member has to `/unban` them first.")
             return
+        if kind == "blacklist" and not await request_confirmation(
+            ctx, f"Blacklist **{user}** from **{ctx.guild.name}**?\n\n{BLACKLIST_MEANING}",
+            title="Confirm blacklist", note=None,
+        ):
+            await ctx.send(embed=build_notice_embed("Blacklist cancelled - nothing was done.", success=False))
+            return
 
-        await ctx.defer()
+        await safe_defer(ctx)
         unban_at = discord.utils.utcnow() + length if length else None
         expiry_text = (
             f"{format_duration(length)} - ends {discord.utils.format_dt(unban_at, 'F')} "
@@ -227,7 +233,7 @@ class Moderation(commands.Cog):
             embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
             await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="ban", description="Permanently ban a user (they can appeal)")
+    @commands.hybrid_command(name="ban", description="Permanent ban that they CAN appeal (use /blacklist for a final ban)")
     @app_commands.describe(user="The user to ban (doesn't need to be in the server)", reason="Why they're being banned")
     @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
@@ -236,8 +242,13 @@ class Moderation(commands.Cog):
     async def ban(self, ctx: commands.Context, user: discord.Member | discord.User, *, reason: str = "No reason provided"):
         await self._ban(ctx, user, reason, kind="ban")
 
-    @commands.hybrid_command(name="blacklist", description="Permanently ban a user with no appeal - final")
-    @app_commands.describe(user="The user to blacklist (doesn't need to be in the server)", reason="Why they're being blacklisted")
+    @commands.hybrid_command(
+        name="blacklist", description="Final ban: permanent and can NEVER be appealed (use /ban if they may appeal)"
+    )
+    @app_commands.describe(
+        user="Who to blacklist - a final, unappealable ban (they don't need to be in the server)",
+        reason="Why they're being blacklisted - shown to them in their DM",
+    )
     @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("gov")

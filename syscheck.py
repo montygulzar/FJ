@@ -136,7 +136,7 @@ def check_commands(report: Report, bot: commands.Bot) -> None:
     )
 
 
-def target_guilds(bot: commands.Bot) -> list[discord.Guild]:
+def moderated_guilds(bot: commands.Bot) -> list[discord.Guild]:
     if config.APPROVED_GUILD_IDS:
         return [guild for guild in bot.guilds if guild.id in config.APPROVED_GUILD_IDS]
     return list(bot.guilds)
@@ -155,7 +155,7 @@ async def check_guilds(report: Report, bot: commands.Bot) -> None:
         for role_id in sorted(role_ids):
             report.check(role_id in all_role_ids, "FJ-ROLE-001", f"`{role_id}` in {name}.")
 
-    for guild in target_guilds(bot):
+    for guild in moderated_guilds(bot):
         me = guild.me
         if me is None:
             continue

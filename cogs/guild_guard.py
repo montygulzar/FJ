@@ -12,7 +12,8 @@ from config import (
     SERVER_DISPLAY_NAME,
 )
 from embeds import DANGER_COLOR, SUCCESS_COLOR, branded, logo_url
-from notify import create_invite
+from modlog import try_dm
+from notify import create_invite, resolve_user
 
 logger = logging.getLogger("modbot.guild_guard")
 
@@ -130,11 +131,9 @@ class GuildGuard(commands.Cog):
 
     async def alert_owners(self, embed: discord.Embed) -> None:
         for owner_id in OWNER_IDS:
-            try:
-                owner = self.bot.get_user(owner_id) or await self.bot.fetch_user(owner_id)
-                await owner.send(embed=embed)
-            except discord.HTTPException:
-                continue
+            owner = await resolve_user(self.bot, owner_id)
+            if owner is not None:
+                await try_dm(owner, embed)
 
     async def _leave(self, guild: discord.Guild) -> None:
         try:
@@ -188,13 +187,7 @@ class GuildGuard(commands.Cog):
             embed.set_thumbnail(url=guild.icon.url)
         embed.add_field(name="Server", value=f"{guild.name}\n`{guild.id}`", inline=True)
         embed.add_field(name="Members", value=str(guild.member_count or 0), inline=True)
-        branded(embed)
-        for owner_id in OWNER_IDS:
-            try:
-                owner = self.bot.get_user(owner_id) or await self.bot.fetch_user(owner_id)
-                await owner.send(embed=embed)
-            except discord.HTTPException:
-                continue
+        await self.alert_owners(branded(embed))
 
 
 async def setup(bot: commands.Bot):

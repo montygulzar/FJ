@@ -10,6 +10,17 @@ from views import link_view
 REJOIN_INVITE_MAX_AGE = 7 * 86400
 
 
+async def resolve_user(bot, user_id: int) -> discord.User | None:
+    """The user from cache, else from Discord. None if the account can't be fetched."""
+    user = bot.get_user(user_id)
+    if user is None:
+        try:
+            user = await bot.fetch_user(user_id)
+        except discord.HTTPException:
+            return None
+    return user
+
+
 async def create_invite(
     guild: discord.Guild, *, reason: str, max_age: int = 86400, max_uses: int = 1, unique: bool = True
 ) -> str | None:

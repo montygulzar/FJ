@@ -37,9 +37,9 @@ from embeds import (
 )
 from guards import from_approved_guild, has_tier, is_protected
 from modlog import _resolve_channel, post_to_log_channel, record_case, try_dm
-from notify import dm_action
+from notify import dm_action, resolve_user
 from views import BanAppealView
-from views import ConfirmView, build_confirm_prompt
+from views import BLACKLIST_MEANING, request_confirmation
 
 MAX_TIMEOUT = timedelta(days=28)  # Discord's own cap on a timeout
 BLACKLIST_PAGE_SIZE = 20
@@ -70,7 +70,7 @@ def target_guilds(bot: commands.Bot) -> list[discord.Guild]:
     """Servers a global action is allowed to touch.
 
     Falls back to every server if no allowlist is set. Guilds in
-    GLOBAL_ACTION_EXEMPT_GUILD_IDS are always excluded — they receive no global
+    GLOBAL_ACTION_EXEMPT_GUILD_IDS are always excluded - they receive no global
     actions so that (for example) a globally banned user can still access the
     Appeals server.
     """
@@ -107,13 +107,6 @@ async def refuse_protected(ctx: commands.Context, user: discord.User) -> bool:
         return False
     await ctx.send(embed=build_notice_embed(message, success=False), ephemeral=True)
     return True
-
-
-async def request_confirmation(ctx: commands.Context, description: str) -> bool:
-    view = ConfirmView(author_id=ctx.author.id)
-    view.message = await ctx.send(embed=build_confirm_prompt(description), view=view)
-    await view.wait()
-    return bool(view.confirmed)
 
 
 class GlobalModeration(commands.Cog):
@@ -190,7 +183,10 @@ class GlobalModeration(commands.Cog):
     async def globalban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         if await refuse_protected(ctx, user):
             return
-        if not await request_confirmation(ctx, f"Ban **{user}** from **every server** this bot is in?"):
+        if not await request_confirmation(
+            ctx,
+            f"Ban **{user}** from **every server** and add them to the **global blacklist**?\n\n{BLACKLIST_MEANING}",
+        ):
             await ctx.send(embed=build_notice_embed("Global ban cancelled.", success=False))
             return
 
@@ -297,12 +293,9 @@ class GlobalModeration(commands.Cog):
             logger.warning("Could not ban blacklisted user %s in %s (%s): %s", user_id, guild.name, guild.id, error)
             return
 
-        user = self.bot.get_user(user_id)
+        user = await resolve_user(self.bot, user_id)
         if user is None:
-            try:
-                user = await self.bot.fetch_user(user_id)
-            except discord.HTTPException:
-                return  # Ban is in place; only the case-log entry is lost.
+            return  # Ban is in place; only the case-log entry is lost.
         await record_case(guild, user, self.bot.user, "global_ban", case_reason)
 
     @commands.Cog.listener()
@@ -369,8 +362,8 @@ class GlobalModeration(commands.Cog):
             return
         if not await request_confirmation(
             ctx,
-            f"Blacklist **{user}**? They'll be banned from every server they're in now "
-            "and on sight if they join any other.",
+            f"Globally blacklist **{user}**? They'll be banned from every server they're in now "
+            f"and on sight if they join any other.\n\n{BLACKLIST_MEANING}",
         ):
             await ctx.send(embed=build_notice_embed("Blacklist cancelled.", success=False))
             return

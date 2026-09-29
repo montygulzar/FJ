@@ -77,3 +77,31 @@ async def test_unreachable_appeals_channel_hides_the_button():
         view = BanAppealView(guild_id=5, appealable=True)
     assert not view.has_appeal_button
     assert view.children[0].url == "https://discord.gg/appeals"
+
+
+class TestConfirmationHelpers:
+    @pytest.mark.asyncio
+    async def test_safe_defer_skips_answered_interactions(self):
+        from views import safe_defer
+
+        calls = []
+
+        class Ctx:
+            def __init__(self, done):
+                self.interaction = SimpleNamespace(response=SimpleNamespace(is_done=lambda: done))
+
+            async def defer(self, **kwargs):
+                calls.append(kwargs)
+
+        await safe_defer(Ctx(done=True))
+        assert calls == []
+        await safe_defer(Ctx(done=False), ephemeral=True)
+        assert calls == [{"ephemeral": True}]
+
+    def test_blacklist_prompt_explains_the_meaning(self):
+        from views import BLACKLIST_MEANING, build_confirm_prompt
+
+        embed = build_confirm_prompt(f"Blacklist x?\n\n{BLACKLIST_MEANING}", title="Confirm blacklist", note=None)
+        assert "Confirm blacklist" in embed.title
+        assert "Can't be appealed" in embed.description and "/ban" in embed.description
+        assert embed.fields[0].value == "You have 30 seconds."
