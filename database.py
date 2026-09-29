@@ -155,6 +155,15 @@ SCHEMA_STATEMENTS = (
     """,
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_appeals_one_open ON appeals (guild_id, user_id) WHERE status = 'pending'",
     "CREATE INDEX IF NOT EXISTS idx_appeals_guild_user ON appeals (guild_id, user_id)",
+    # Settings changed from Discord with !devset. They override .env values.
+    """
+    CREATE TABLE IF NOT EXISTS bot_settings (
+        key         TEXT PRIMARY KEY,
+        value       TEXT NOT NULL,
+        updated_by  BIGINT NOT NULL,
+        updated_at  TEXT NOT NULL
+    )
+    """,
     # Users banned everywhere, including servers the bot joins later: the join
     # listener in cogs/global_moderation.py bans anyone listed here on arrival.
     """
@@ -823,6 +832,28 @@ async def get_case_counts_for_user(guild_id: int, user_id: int) -> dict[str, int
     return {row["action_type"]: row["total"] for row in rows}
 
 
+# --- Bot settings (!devset) -------------------------------------------------------
+
+async def get_bot_settings() -> list[asyncpg.Record]:
+    return await _fetch_all("SELECT key, value, updated_by, updated_at FROM bot_settings ORDER BY key")
+
+
+async def set_bot_setting(key: str, value: str, updated_by: int) -> None:
+    await _execute(
+        """
+        INSERT INTO bot_settings (key, value, updated_by, updated_at) VALUES ($1, $2, $3, $4)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by,
+            updated_at = EXCLUDED.updated_at
+        """,
+        key, value, updated_by, datetime.now(timezone.utc).isoformat(),
+        idempotent=True,
+    )
+
+
+async def delete_bot_setting(key: str) -> bool:
+    return (await _execute("DELETE FROM bot_settings WHERE key = $1", key, idempotent=True)) > 0
+
+
 # --- Global blacklist ---------------------------------------------------------
 
 async def add_blacklist(user_id: int, moderator_id: int, reason: str) -> None:
@@ -919,7 +950,7 @@ async def check_connection() -> tuple[bool, str]:
 
 EXPECTED_TABLES = (
     "cases", "guild_settings", "lockdown_roles", "temp_bans", "channel_locks",
-    "appeals", "appeal_votes", "global_blacklist",
+    "appeals", "appeal_votes", "global_blacklist", "bot_settings",
 )
 
 

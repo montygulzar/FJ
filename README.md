@@ -139,6 +139,24 @@ the **View Audit Log** permission. Anything left empty falls back to
 `/setlogchannel` (Mod Logs) or `/setserverlogchannel` (everything else).
 `/settings` shows where each kind goes, and `/testlog` sends a test to all of them.
 
+### Changing settings from Discord: `!devset`
+Owners (`OWNER_IDS`) can change any non-secret setting without editing `.env`
+or restarting. It's a normal `!` command, not a slash command, so it doesn't show
+up in anyone's command list.
+
+```
+!devset                                    show every setting
+!devset MUTE_ROLE_ID @Muted                set one (mentions or IDs work)
+!devset STAFF_ROLE_IDS add @Staff          add to a list  (or: remove)
+!devset CHAT_LOGS_CHANNEL_IDS #chat-logs   point a log at a channel
+!devset APPEAL_URL none                    clear it
+!devset MUTE_ROLE_ID reset                 back to the .env value
+```
+
+Changes apply immediately, are saved in the database so they survive restarts,
+and override `.env`. Each change is posted to Mod Logs. The bot token, database
+settings, `OWNER_IDS` and the command prefix can only be changed in `.env`.
+
 ### System check
 **`/syscheck`** (Dev) checks:
 - your config, the database and the Discord connection

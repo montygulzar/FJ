@@ -125,7 +125,10 @@ def check_commands(report: Report, bot: commands.Bot) -> None:
     for command in bot.walk_commands():
         if isinstance(command, commands.Group) or command.qualified_name in PUBLIC_COMMANDS:
             continue
-        tiered = any(getattr(check, "fjusa_tier", None) for check in command.checks)
+        tiered = any(
+            getattr(check, "fjusa_tier", None) or getattr(check, "fjusa_owner_only", False)
+            for check in command.checks
+        )
         report.check(tiered, "FJ-CMD-003", f"`/{command.qualified_name}` has no tier check.")
 
     _, total_invocations, total_errors = diagnostics.get_command_stats()
@@ -170,17 +173,22 @@ async def check_guilds(report: Report, bot: commands.Bot) -> None:
             if report.check(mute_role is not None, "FJ-ROLE-002", f"**{guild.name}**"):
                 report.check(mute_role < me.top_role, "FJ-PERM-002", f"**{guild.name}**: {mute_role.mention}")
 
+        unset = []
         for category in config.LOG_CHANNEL_IDS:
             channel_id = await resolve_log_channel_id(guild, category)
             if channel_id is None:
-                code = "FJ-LOG-001" if category == "mod" else "FJ-LOG-004"
-                report.check(False, code, f"**{guild.name}**: {log_label(category)}")
+                if category == "mod":
+                    report.check(False, "FJ-LOG-001", f"**{guild.name}**")
+                else:
+                    unset.append(log_label(category))
                 continue
             channel = guild.get_channel_or_thread(channel_id)
             report.check(
                 channel is not None and _can_post(channel, me),
                 "FJ-LOG-002", f"**{guild.name}**: {log_label(category)} (<#{channel_id}>)",
             )
+        # One line per server rather than one per log kind.
+        report.check(not unset, "FJ-LOG-004", f"**{guild.name}**: " + ", ".join(unset))
 
     # Env log channel IDs that don't belong to any server at all.
     for category, channel_ids in config.LOG_CHANNEL_IDS.items():

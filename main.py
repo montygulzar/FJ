@@ -23,6 +23,7 @@ import config
 import database
 import diagnostics
 import guards
+import runtime_config
 from config import BOT_TOKEN, COMMAND_PREFIX
 from embeds import build_notice_embed, set_brand_icon
 from health import HealthServer
@@ -47,6 +48,7 @@ INITIAL_COGS = (
     "cogs.appeals",
     "cogs.help",
     "cogs.userinfo",
+    "cogs.devset",
 )
 
 
@@ -272,6 +274,15 @@ async def run() -> int:
         except Exception:
             logger.critical("Database unavailable - cannot start", exc_info=True)
             return 1
+
+        # Settings changed with !devset, applied before any command loads. A problem
+        # here must not stop the bot - it just runs on the .env values.
+        try:
+            applied = await runtime_config.load_overrides()
+            if applied:
+                logger.info("Applied %d Discord-set setting(s): %s", len(applied), ", ".join(applied))
+        except Exception:
+            logger.exception("Could not load Discord-set settings - using .env values")
 
         client = asyncio.create_task(bot.start(BOT_TOKEN), name="discord-client")
         signalled = asyncio.create_task(shutdown.wait(), name="shutdown-signal")

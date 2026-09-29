@@ -13,12 +13,12 @@ single code in Discord. The same codes appear in the startup logs.
 | Code | | Problem | Fix |
 |---|---|---|---|
 | `FJ-CFG-001` | 🔴 | No owner configured | Set OWNER_IDS in .env to your Discord user ID, then restart the bot. |
-| `FJ-CFG-002` | 🔴 | No staff tiers configured | Set STAFF_ROLE_IDS / STAFF_DIRECTOR_ROLE_IDS / GOV_ROLE_IDS in .env - until then only owners can use commands. |
-| `FJ-CFG-003` | 🟡 | Auto-leave is on with no approved servers | Add your server IDs to APPROVED_GUILD_IDS, or set LEAVE_UNAPPROVED_GUILDS=false - otherwise the bot leaves everywhere. |
+| `FJ-CFG-002` | 🔴 | No staff tiers configured | Run `!devset STAFF_ROLE_IDS @Staff` (and STAFF_DIRECTOR / GOV) - until then only owners can use commands. |
+| `FJ-CFG-003` | 🟡 | Auto-leave is on with no approved servers | Run `!devset APPROVED_GUILD_IDS <server id>`, or `!devset LEAVE_UNAPPROVED_GUILDS false` - otherwise the bot leaves everywhere. |
 | `FJ-CFG-004` | 🟡 | User is both protected and blocked | Remove the user from either PROTECTED_USER_IDS or BLOCKED_USER_IDS. |
 | `FJ-CFG-005` | 🟡 | Exempt server isn't approved | Every GLOBAL_ACTION_EXEMPT_GUILD_IDS entry should also be in APPROVED_GUILD_IDS. |
-| `FJ-CFG-006` | 🟡 | No mute role set | Set MUTE_ROLE_ID in .env so /mute works. /tempmute works without it. |
-| `FJ-CFG-007` | 🔵 | No approved server list | Global actions reach every server the bot is in. Set APPROVED_GUILD_IDS to limit them to yours. |
+| `FJ-CFG-006` | 🟡 | No mute role set | Run `!devset MUTE_ROLE_ID @Muted` (or set it in .env) so /mute works. /tempmute works without it. |
+| `FJ-CFG-007` | 🔵 | No approved server list | Global actions reach every server the bot is in. Run `!devset APPROVED_GUILD_IDS <server id>` to limit them to yours. |
 | `FJ-CFG-008` | 🟡 | Appeal alert channel misconfigured | APPEAL_ALERT_CHANNEL_ID needs APPEALS_CHANNEL_ID set too, and must be a different channel. |
 
 ## Database
@@ -56,17 +56,17 @@ single code in Discord. The same codes appear in the startup logs.
 
 | Code | | Problem | Fix |
 |---|---|---|---|
-| `FJ-ROLE-001` | 🟡 | Configured role doesn't exist | A role ID in .env isn't in any server the bot is in. Re-copy the role ID (right-click > Copy ID). |
+| `FJ-ROLE-001` | 🟡 | Configured role doesn't exist | A configured role ID isn't in any server the bot is in. Fix it with `!devset <SETTING> @role`. |
 | `FJ-ROLE-002` | 🟡 | Mute role missing in a server | MUTE_ROLE_ID isn't a role in this server, so /mute won't work here. Mute roles are per server. |
 
 ## Log channels
 
 | Code | | Problem | Fix |
 |---|---|---|---|
-| `FJ-LOG-001` | 🟡 | No Mod Logs channel | Cases aren't being logged. Set MOD_LOGS_CHANNEL_IDS in .env or run /setlogchannel. |
+| `FJ-LOG-001` | 🟡 | No Mod Logs channel | Cases aren't being logged. Run `!devset MOD_LOGS_CHANNEL_IDS #channel`, or /setlogchannel. |
 | `FJ-LOG-002` | 🔴 | Bot can't post in a log channel | Give the bot View Channel, Send Messages and Embed Links in the listed channel. |
 | `FJ-LOG-003` | 🟡 | Log channel ID not found | A *_LOGS_CHANNEL_IDS entry isn't a channel in any server the bot is in. Re-copy the channel ID. |
-| `FJ-LOG-004` | 🔵 | Log kind not set up | These logs aren't going anywhere. Optional - set the matching *_LOGS_CHANNEL_IDS if you want them. |
+| `FJ-LOG-004` | 🔵 | Log kind not set up | These logs aren't going anywhere. Optional - e.g. `!devset CHAT_LOGS_CHANNEL_IDS #chat-logs`. |
 
 ## Ban appeals
 
@@ -76,7 +76,7 @@ single code in Discord. The same codes appear in the startup logs.
 | `FJ-APL-002` | 🔴 | Bot can't post in the appeals channel | Give the bot View Channel, Send Messages and Embed Links in the appeals channel. |
 | `FJ-APL-003` | 🟡 | No voter roles in the appeals server | None of APPEAL_VOTER_ROLE_IDS exist in the appeals channel's server, so only owners can vote. |
 | `FJ-APL-004` | 🟡 | Appeal alert channel unreachable | APPEAL_ALERT_CHANNEL_ID isn't a channel the bot can post in, so nobody is told about new appeals. |
-| `FJ-APL-005` | 🔵 | In-Discord appeals are off | Optional. Set APPEALS_CHANNEL_ID to let banned users appeal from their DMs. |
+| `FJ-APL-005` | 🔵 | In-Discord appeals are off | Optional. Run `!devset APPEALS_CHANNEL_ID #appeals` to let banned users appeal from their DMs. |
 
 ## Background tasks
 
