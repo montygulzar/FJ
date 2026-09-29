@@ -15,7 +15,7 @@ from database import (
     remove_temp_ban,
 )
 from durations import duration_autocomplete, duration_error, parse_duration
-from embeds import audit_reason, build_ban_dm_embed, build_notice_embed, format_duration
+from embeds import add_detail, audit_reason, build_ban_dm_embed, build_notice_embed, format_duration
 from guards import has_tier, member_tier_index, refusal_reason, tier_index
 from modlog import record_case_full, try_dm
 from notify import dm_action, dm_unban
@@ -132,7 +132,7 @@ class Moderation(commands.Cog):
             delivered = await dm_action(
                 member, "tempmute", reason, guild=ctx.guild, case_id=case_id, duration=duration, expires_at=until
             )
-        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        add_detail(embed, "Notification", dm_status(delivered))
         await ctx.send(embed=embed)
 
     async def _ban(
@@ -203,12 +203,8 @@ class Moderation(commands.Cog):
         embed, _ = await record_case_full(
             ctx.guild, user, ctx.author, kind, reason, duration=length, expires_at=unban_at
         )
-        embed.add_field(
-            name="Appealable",
-            value="\U0001F534 No - final" if final else "\U0001F7E2 Yes",
-            inline=True,
-        )
-        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        add_detail(embed, "Appealable", "\U0001F534 No - final" if final else "\U0001F7E2 Yes")
+        add_detail(embed, "Notification", dm_status(delivered))
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="kick", description="Kick a member from this server")
@@ -230,7 +226,7 @@ class Moderation(commands.Cog):
         )
         if succeeded:
             embed, _ = await record_case_full(ctx.guild, member, ctx.author, "kick", reason)
-            embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+            add_detail(embed, "Notification", dm_status(delivered))
             await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="ban", description="Permanent ban that they CAN appeal (use /blacklist for a final ban)")
@@ -304,12 +300,11 @@ class Moderation(commands.Cog):
         await remove_temp_ban(ctx.guild.id, user.id)
         embed, case_id = await record_case_full(ctx.guild, user, ctx.author, "unban", reason)
         delivered = await dm_unban(user, ctx.guild, reason, case_id=case_id)
-        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        add_detail(embed, "Notification", dm_status(delivered))
         if globally_blacklisted:
-            embed.add_field(
-                name="\u26A0\uFE0F Still globally blacklisted",
-                value="They'll be banned again if they rejoin. Use `/globalunban` to lift it everywhere.",
-                inline=False,
+            add_detail(
+                embed, "\u26A0\uFE0F Still globally blacklisted",
+                "they'll be banned again if they rejoin - use `/globalunban` to lift it everywhere",
             )
         await ctx.send(embed=embed)
 
@@ -331,8 +326,8 @@ class Moderation(commands.Cog):
             member, "warn", reason, guild=ctx.guild, case_id=case_id,
             note=f"This is warning **#{warn_count}** on your record.",
         )
-        embed.add_field(name="Total warnings", value=f"**{warn_count}**", inline=True)
-        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        add_detail(embed, "Total warnings", f"**{warn_count}**")
+        add_detail(embed, "Notification", dm_status(delivered))
         await ctx.send(embed=embed)
         await self.escalate_if_needed(ctx, member, warn_count)
 
@@ -371,8 +366,8 @@ class Moderation(commands.Cog):
         delivered = await dm_action(
             member, "mute", reason, guild=ctx.guild, case_id=case_id, note="This lasts until a staff member unmutes you."
         )
-        embed.add_field(name="Duration", value="Until unmuted", inline=True)
-        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        add_detail(embed, "Duration", "Until unmuted")
+        add_detail(embed, "Notification", dm_status(delivered))
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="tempmute", description="Timeout a member for a set duration")
@@ -409,7 +404,7 @@ class Moderation(commands.Cog):
         delivered = await dm_action(
             member, "tempmute", reason, guild=ctx.guild, case_id=case_id, duration=length, expires_at=until
         )
-        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        add_detail(embed, "Notification", dm_status(delivered))
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="unmute", description="Remove a member's mute role and any active timeout")
@@ -444,7 +439,7 @@ class Moderation(commands.Cog):
             return
         embed, case_id = await record_case_full(ctx.guild, member, ctx.author, "unmute", reason)
         delivered = await dm_action(member, "unmute", reason, guild=ctx.guild, case_id=case_id)
-        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        add_detail(embed, "Notification", dm_status(delivered))
         await ctx.send(embed=embed)
 
 

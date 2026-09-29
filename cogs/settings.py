@@ -11,7 +11,7 @@ from database import (
     set_server_log_channel,
     set_warn_thresholds,
 )
-from embeds import NEUTRAL_COLOR, base_embed, build_notice_embed
+from embeds import NEUTRAL_COLOR, add_detail, base_embed, build_notice_embed
 from guards import has_tier
 from modlog import (
     LOG_CATEGORIES,
@@ -65,28 +65,20 @@ class Settings(commands.Cog):
         )
 
         embed = base_embed(f"\u2699\uFE0F  Settings  \u2022  {ctx.guild.name}", NEUTRAL_COLOR)
-        embed.add_field(name="Announcement channel", value=announce_display, inline=True)
+        add_detail(embed, "Announcement channel", announce_display)
         routing = []
         for category in LOG_CATEGORIES:
             channel_id = await resolve_log_channel_id(ctx.guild, category)
             source = " *(env)*" if env_log_channel_id(ctx.guild, category) else ""
             routing.append(f"**{log_label(category)}**: {await _channel_display(ctx.guild, channel_id)}{source}")
-        embed.add_field(name="\U0001F4DC  Logs", value="\n".join(routing), inline=False)
-        embed.add_field(name="Lockdown roles", value=lockdown_value, inline=False)
-        embed.add_field(
-            name="Raid protection",
-            value=f"Flag accounts under {raid_hours}h old" if raid_hours else "Disabled",
-            inline=True,
-        )
-        embed.add_field(
-            name="Warn escalation",
-            value=(
+        add_detail(embed, "\U0001F4DC  Logs", "\n".join(routing))
+        add_detail(embed, "Lockdown roles", lockdown_value)
+        add_detail(embed, "Raid protection", f"Flag accounts under {raid_hours}h old" if raid_hours else "Disabled")
+        add_detail(embed, "Warn escalation", (
                 f"Mute at {describe_threshold(config['warn_mute_threshold'], f' for {mute_minutes}m' if mute_minutes else '')}\n"
                 f"Kick at {describe_threshold(config['warn_kick_threshold'])}\n"
                 f"Ban at {describe_threshold(config['warn_ban_threshold'])}"
-            ),
-            inline=True,
-        )
+            ))
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="setlogchannel", description="Set where moderation cases are logged")
@@ -244,9 +236,9 @@ class Settings(commands.Cog):
         )
 
         embed = base_embed("\U0001F4C8  Warn Escalation Updated", NEUTRAL_COLOR)
-        embed.add_field(name="Mute", value=describe_threshold(mute_at, f" for {mute_minutes}m"), inline=True)
-        embed.add_field(name="Kick", value=describe_threshold(kick_at), inline=True)
-        embed.add_field(name="Ban", value=describe_threshold(ban_at), inline=True)
+        add_detail(embed, "Mute", describe_threshold(mute_at, f" for {mute_minutes}m"))
+        add_detail(embed, "Kick", describe_threshold(kick_at))
+        add_detail(embed, "Ban", describe_threshold(ban_at))
         await ctx.send(embed=embed)
 
 

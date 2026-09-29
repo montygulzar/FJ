@@ -52,13 +52,13 @@ class TestDmText:
     def test_blacklist_dm_says_final(self):
         guild = SimpleNamespace(name="FJUSA", icon=None)
         embed = build_ban_dm_embed("abuse", kind="blacklist", guild=guild, can_contact_developer=True)
-        text = " ".join(field.value for field in embed.fields)
+        text = embed.description
         assert "cannot be appealed" in text and "Message Developer" in text
 
     def test_permanent_ban_dm_offers_appeal(self):
         guild = SimpleNamespace(name="FJUSA", icon=None)
         embed = build_ban_dm_embed("rules", kind="ban", guild=guild, can_appeal_here=True)
-        text = " ".join(field.value for field in embed.fields)
+        text = embed.description
         assert "Submit an appeal" in text and "cannot be appealed" not in text
 
     def test_unknown_kind_rejected(self):

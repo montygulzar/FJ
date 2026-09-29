@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands
 
-from embeds import DANGER_COLOR, SUCCESS_COLOR, WARNING_COLOR, branded
+from embeds import add_detail, DANGER_COLOR, SUCCESS_COLOR, WARNING_COLOR, branded
 from modlog import post_to_server_log_channel
 
 logger = logging.getLogger("modbot.alt_detector")
@@ -111,23 +111,15 @@ def _build_embed(
     )
     embed.set_author(name=str(member), icon_url=member.display_avatar.url)
     embed.set_thumbnail(url=member.display_avatar.url)
-    embed.add_field(name="User", value=f"{member.mention}\n`{member.id}`", inline=True)
-    embed.add_field(name="Risk score", value=f"**{score}** / {MAX_SCORE}", inline=True)
-    embed.add_field(
-        name="Account age",
-        value=f"{discord.utils.format_dt(member.created_at, 'R')}\n({_age_days(member.created_at)}d old)",
-        inline=True,
-    )
+    add_detail(embed, "User", f"{member.mention} (`{member.id}`)")
+    add_detail(embed, "Risk score", f"**{score}** / {MAX_SCORE}")
+    add_detail(embed, "Account age", f"{discord.utils.format_dt(member.created_at, 'R')} ({_age_days(member.created_at)}d old)")
     if inviter:
-        embed.add_field(name="Invited by", value=f"{inviter.mention}\n`{inviter.id}`", inline=True)
+        add_detail(embed, "Invited by", f"{inviter.mention} (`{inviter.id}`)")
     if invite_code:
-        embed.add_field(name="Invite code", value=f"`{invite_code}`", inline=True)
+        add_detail(embed, "Invite code", f"`{invite_code}`")
     if reasons:
-        embed.add_field(
-            name="Factors",
-            value="\n".join(f"- {r}" for r in reasons) if reasons else "None",
-            inline=False,
-        )
+        add_detail(embed, "Factors", "\n".join(f"- {r}" for r in reasons) if reasons else "None")
     return branded(embed)
 
 

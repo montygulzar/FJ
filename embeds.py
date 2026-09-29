@@ -6,6 +6,7 @@ Design rules:
 - Every embed ends with the branded footer (bot name + avatar) and a timestamp.
 - Case embeds read top to bottom: what happened, to whom, by whom, why.
 """
+import re
 from datetime import datetime, timedelta
 from typing import NamedTuple
 
@@ -119,11 +120,6 @@ def format_duration(delta: timedelta) -> str:
     return ", ".join(parts[:2]) or "less than a minute"
 
 
-def user_line(user: discord.abc.User) -> str:
-    """'@mention' plus the raw ID, which survives the account being renamed or deleted."""
-    return f"{user.mention}\n`{user.id}`"
-
-
 def branded(embed: discord.Embed, *, footer_prefix: str | None = None) -> discord.Embed:
     """Apply the shared footer and timestamp. Every outgoing embed should pass through here."""
     text = f"{footer_prefix}  •  {BRAND_NAME}" if footer_prefix else BRAND_NAME
@@ -135,6 +131,81 @@ def branded(embed: discord.Embed, *, footer_prefix: str | None = None) -> discor
 
 def base_embed(title: str, color: int, description: str | None = None) -> discord.Embed:
     return branded(discord.Embed(title=title, description=description, color=color))
+
+
+def detail_line(key: str | None, value) -> str:
+    """**Key**: value - or, for multi-line values, **Key** as a heading above them."""
+    if not key:
+        return str(value)
+    value = str(value)
+    return f"**{key}**\n{value}" if "\n" in value.strip() else f"**{key}**: {value}"
+
+
+def details_text(details) -> str:
+    """("Key", value) pairs as detail lines. None keys print the value alone;
+    None/empty values are skipped."""
+    return "\n".join(detail_line(key, value) for key, value in details if value)
+
+
+def card(
+    title: str,
+    color: int,
+    *,
+    user: discord.abc.User | None = None,
+    author: tuple[str, str | None] | None = None,
+    body: str | None = None,
+    details=(),
+    warning: str | None = None,
+    thumbnail: str | None = None,
+    footer: str | None = None,
+) -> discord.Embed:
+    """The house style (after Quark): who it's about on top, a titled headline, the
+    story in plain words, then **Key**: value lines. Reads cleanly on mobile, where
+    side-by-side fields stack awkwardly."""
+    parts = [body] if body else []
+    lines = details_text(details)
+    if lines:
+        parts.append(lines)
+    if warning:
+        parts.append(f"**WARNING!**\n```diff\n{warning}\n```")
+    embed = discord.Embed(
+        title=title[:256],
+        description=clamp("\n\n".join(parts), EMBED_DESCRIPTION_LIMIT, empty="") or None,
+        color=color,
+    )
+    if user is not None:
+        embed.set_author(name=str(user), icon_url=user.display_avatar.url)
+    elif author is not None:
+        embed.set_author(name=author[0][:256], icon_url=author[1])
+    if thumbnail:
+        embed.set_thumbnail(url=thumbnail)
+    return branded(embed, footer_prefix=footer)
+
+
+_DETAIL_LINE = re.compile(r"^\*\*[^*\n]+\*\*(:|$)", re.M)
+
+
+def add_detail(embed: discord.Embed, key: str, value) -> discord.Embed:
+    """Append one detail line to an embed. The first one after an intro sentence gets
+    a blank line above it, like the rest of the house style."""
+    line = detail_line(key, value)
+    description = embed.description or ""
+    if not description:
+        embed.description = clamp(line, EMBED_DESCRIPTION_LIMIT)
+        return embed
+    separator = "\n" if _DETAIL_LINE.search(description) else "\n\n"
+    embed.description = clamp(description + separator + line, EMBED_DESCRIPTION_LIMIT)
+    return embed
+
+
+def when(moment: datetime) -> str:
+    """'<full date> (<in 2 hours>)' - absolute and relative, in the viewer's timezone."""
+    return f"{discord.utils.format_dt(moment, 'f')} ({discord.utils.format_dt(moment, 'R')})"
+
+
+def ref(user: discord.abc.User) -> str:
+    """'@mention (`id`)'."""
+    return f"{user.mention} (`{user.id}`)"
 
 
 def build_notice_embed(message: str, *, success: bool = True, title: str | None = None) -> discord.Embed:
@@ -159,21 +230,19 @@ def build_case_embed(
     expires_at: datetime | None = None,
 ) -> discord.Embed:
     style = style_for(action_type)
-    embed = discord.Embed(color=style.color)
-    embed.set_author(name=f"{style.icon}  {style.title}  •  Case #{case_id}", icon_url=BRAND_ICON_URL)
-    embed.set_thumbnail(url=target.display_avatar.url)
-    embed.add_field(name="User", value=user_line(target), inline=True)
-    embed.add_field(name="Moderator", value=user_line(moderator), inline=True)
-    if duration is not None:
-        embed.add_field(name="Duration", value=format_duration(duration), inline=True)
-    if expires_at is not None:
-        embed.add_field(
-            name="Expires",
-            value=f"{discord.utils.format_dt(expires_at, 'f')}\n{discord.utils.format_dt(expires_at, 'R')}",
-            inline=True,
-        )
-    embed.add_field(name="Reason", value=f">>> {clamp(reason, 1000)}", inline=False)
-    return branded(embed, footer_prefix=f"Case #{case_id}")
+    return card(
+        f"{style.icon}  {style.title}",
+        style.color,
+        user=target,
+        details=[
+            ("User", ref(target)),
+            ("Moderator", ref(moderator)),
+            ("Duration", format_duration(duration) if duration is not None else None),
+            ("Expires", when(expires_at) if expires_at is not None else None),
+            ("Reason", clamp(reason, 1000)),
+        ],
+        footer=f"Case #{case_id}  \u2022  ID: {target.id}",
+    )
 
 
 def dm_headline(action_type: str, location_name: str) -> str:
@@ -181,6 +250,12 @@ def dm_headline(action_type: str, location_name: str) -> str:
     style = style_for(action_type)
     line = style.dm_line.format(location=location_name, network=SERVER_DISPLAY_NAME).rstrip(".")
     return f"{style.icon}  {line or style.title}"
+
+
+def _dm_author(guild: discord.Guild | None) -> tuple[str, str | None]:
+    if guild is not None:
+        return guild.name, guild.icon.url if guild.icon else None
+    return f"{SERVER_DISPLAY_NAME} Network", logo_url()
 
 
 def build_dm_notice_embed(
@@ -196,25 +271,20 @@ def build_dm_notice_embed(
 ) -> discord.Embed:
     """What the member receives: a headline, the reason, and when it ends."""
     style = style_for(action_type)
-    embed = discord.Embed(title=dm_headline(action_type, location_name)[:256], description=note, color=style.color)
-    if guild is not None:
-        embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
-    else:
-        embed.set_author(name=f"{SERVER_DISPLAY_NAME} Network", icon_url=logo_url())
-    if logo_url():
-        embed.set_thumbnail(url=logo_url())
-    embed.add_field(name="Reason", value=f">>> {clamp(reason, 1000)}", inline=False)
-    if duration is not None:
-        embed.add_field(name="Duration", value=format_duration(duration), inline=True)
-    if expires_at is not None:
-        embed.add_field(
-            name="Ends",
-            value=f"{discord.utils.format_dt(expires_at, 'f')}\n{discord.utils.format_dt(expires_at, 'R')}",
-            inline=True,
-        )
-    if case_id is not None:
-        embed.add_field(name="Case", value=f"`#{case_id}`", inline=True)
-    return branded(embed, footer_prefix="Automated notice")
+    return card(
+        dm_headline(action_type, location_name),
+        style.color,
+        author=_dm_author(guild),
+        body=note,
+        details=[
+            ("Reason", clamp(reason, 1000)),
+            ("Duration", format_duration(duration) if duration is not None else None),
+            ("Ends", when(expires_at) if expires_at is not None else None),
+            ("Case", f"`#{case_id}`" if case_id is not None else None),
+        ],
+        thumbnail=logo_url(),
+        footer="Automated notice",
+    )
 
 
 def build_summary_embed(
@@ -224,22 +294,17 @@ def build_summary_embed(
     failed: list[str],
 ) -> discord.Embed:
     style = style_for(action_type)
-    embed = discord.Embed(color=style.color)
-    embed.set_author(name=f"{style.icon}  {style.title}", icon_url=logo_url())
-    embed.set_thumbnail(url=user.display_avatar.url)
-    embed.description = f"**{user}**  •  `{user.id}`"
-    embed.add_field(
-        name=f"{SUCCESS_ICON}  Applied in {len(affected)} server(s)",
-        value=clamp("\n".join(f"• {name}" for name in affected), empty="*None*"),
-        inline=False,
+    return card(
+        f"{style.icon}  {style.title}",
+        style.color,
+        user=user,
+        body=f"Applied to {ref(user)} in **{len(affected)}** server(s).",
+        details=[
+            ("Servers", clamp(", ".join(affected), 1500) if affected else "*none*"),
+            (f"{WARNING_ICON} Skipped - missing permissions", clamp(", ".join(failed), 1000) if failed else None),
+        ],
+        footer=f"ID: {user.id}",
     )
-    if failed:
-        embed.add_field(
-            name=f"{WARNING_ICON}  Skipped, missing permissions ({len(failed)})",
-            value=clamp("\n".join(f"• {name}" for name in failed)),
-            inline=False,
-        )
-    return branded(embed)
 
 
 def build_case_line(row, guild: discord.Guild) -> tuple[str, str]:
@@ -282,65 +347,53 @@ def build_ban_dm_embed(
         if kind == "global"
         else dm_headline(action_type, location)
     )
-    embed = discord.Embed(title=headline[:256], color=style_for(action_type).color)
-    if guild is not None and kind != "global":
-        embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
-    else:
-        embed.set_author(name=f"{SERVER_DISPLAY_NAME} Network", icon_url=logo_url())
-    if logo_url():
-        embed.set_thumbnail(url=logo_url())
-
-    embed.add_field(name="Reason", value=f">>> {clamp(reason, 1000)}", inline=False)
     if kind == "tempban":
-        embed.add_field(name="Duration", value=unban_at or "Temporary", inline=False)
+        duration = unban_at or "Temporary"
     elif kind == "ban":
-        embed.add_field(name="Duration", value="Permanent - until an appeal is accepted", inline=False)
+        duration = "Permanent - until an appeal is accepted"
     else:
-        embed.add_field(name="Duration", value="\u26D4 Permanent and **final** - this ban cannot be appealed", inline=False)
+        duration = "\u26D4 Permanent and **final** - this ban cannot be appealed"
 
     if kind in ("blacklist", "global"):
-        if can_contact_developer:
-            embed.add_field(
-                name="Staff abuse?",
-                value="If you believe this was an abuse of power, press **Message Developer** below.",
-                inline=False,
-            )
+        next_step = (
+            ("Staff abuse?", "If you believe this was an abuse of power, press **Message Developer** below.")
+            if can_contact_developer else (None, None)
+        )
     elif can_appeal_here:
-        embed.add_field(
-            name="Appeals",
-            value="Think this was a mistake? Press **Submit an appeal** below and staff will review it.",
-            inline=False,
-        )
+        next_step = ("Appeal", "Think this was a mistake? Press **Submit an appeal** below and staff will review it.")
     elif APPEAL_URL:
-        embed.add_field(
-            name="Appeals",
-            value=f"You can appeal in the [{SERVER_DISPLAY_NAME} Appeals server]({APPEAL_URL}).",
-            inline=False,
-        )
-    return branded(embed, footer_prefix="Automated notice")
+        next_step = ("Appeal", f"You can appeal in the [{SERVER_DISPLAY_NAME} Appeals server]({APPEAL_URL}).")
+    else:
+        next_step = (None, None)
 
-
-def _appeal_dm_base(title: str, color: int, guild: discord.Guild | None) -> discord.Embed:
-    embed = discord.Embed(title=title, color=color)
-    if guild is not None:
-        embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
-    if logo_url():
-        embed.set_thumbnail(url=logo_url())
-    return embed
+    return card(
+        headline,
+        style_for(action_type).color,
+        author=_dm_author(guild if kind != "global" else None),
+        details=[("Reason", clamp(reason, 1000)), ("Duration", duration), next_step],
+        thumbnail=logo_url(),
+        footer="Automated notice",
+    )
 
 
 def build_appeal_receipt_dm(appeal_id: int, guild: discord.Guild | None, team: str, answer: str) -> discord.Embed:
     """Sent when an appeal is submitted, so the user has a record of it."""
-    embed = _appeal_dm_base("\U0001F4E8  Appeal Received", NEUTRAL_COLOR, guild)
-    embed.description = (
-        f"Thanks - the **{team}** has your appeal and will review your case.\n"
-        "You'll get a DM from me as soon as there's a decision."
+    return card(
+        "\U0001F4E8  Appeal Received",
+        NEUTRAL_COLOR,
+        author=_dm_author(guild),
+        body=(
+            f"Thanks - the **{team}** has your appeal and will review your case.\n"
+            "You'll get a DM from me as soon as there's a decision."
+        ),
+        details=[
+            ("Appeal", f"`#{appeal_id}`"),
+            ("Status", "\u23F3 Under review"),
+            ("What you wrote", f"\n>>> {clamp(answer, 1500)}"),
+        ],
+        thumbnail=logo_url(),
+        footer=team,
     )
-    embed.add_field(name="Appeal", value=f"`#{appeal_id}`", inline=True)
-    embed.add_field(name="Server", value=guild.name if guild else "Unknown", inline=True)
-    embed.add_field(name="Status", value="\u23F3 Under review", inline=True)
-    embed.add_field(name="What you wrote", value=f">>> {clamp(answer, 1000)}", inline=False)
-    return branded(embed, footer_prefix=team)
 
 
 def build_appeal_decision_dm(
@@ -354,23 +407,25 @@ def build_appeal_decision_dm(
     """"The FJUSA Ban Team has reviewed your case and approved/denied your appeal." """
     where = f"**{guild.name}**" if guild else "the server"
     if approved:
-        embed = _appeal_dm_base("\u2696\uFE0F  Appeal Approved", SUCCESS_COLOR, guild)
-        embed.description = (
+        body = (
             f"The **{team}** has reviewed your case and **approved** your appeal. \U0001F7E2\n"
             f"Your ban from {where} has been lifted."
         )
-        embed.add_field(name="Next steps", value="Use **Rejoin** below if it's there, and please follow the rules.", inline=False)
+        details = [("Appeal", f"`#{appeal_id}`"), ("Result", "\U0001F7E2 Approved"),
+                   ("Next steps", "Use **Rejoin** below if it's there, and please follow the rules.")]
     else:
-        embed = _appeal_dm_base("\u2696\uFE0F  Appeal Denied", DANGER_COLOR, guild)
-        embed.description = (
+        body = (
             f"The **{team}** has reviewed your case and **denied** your appeal. \U0001F534\n"
             f"Your ban from {where} stays in place."
         )
-        embed.add_field(
-            name="Appeal again",
-            value=f"{discord.utils.format_dt(retry_at, 'f')} ({discord.utils.format_dt(retry_at, 'R')})" if retry_at else "Now",
-            inline=False,
-        )
-    embed.add_field(name="Appeal", value=f"`#{appeal_id}`", inline=True)
-    embed.add_field(name="Result", value="\U0001F7E2 Approved" if approved else "\U0001F534 Denied", inline=True)
-    return branded(embed, footer_prefix=team)
+        details = [("Appeal", f"`#{appeal_id}`"), ("Result", "\U0001F534 Denied"),
+                   ("Appeal again", when(retry_at) if retry_at else "Now")]
+    return card(
+        "\u2696\uFE0F  Appeal Approved" if approved else "\u2696\uFE0F  Appeal Denied",
+        SUCCESS_COLOR if approved else DANGER_COLOR,
+        author=_dm_author(guild),
+        body=body,
+        details=details,
+        thumbnail=logo_url(),
+        footer=team,
+    )
