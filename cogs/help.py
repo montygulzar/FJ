@@ -68,7 +68,7 @@ def build_home_embed(bot: commands.Bot, user: discord.abc.User, user_tier: int |
         title=f"\U0001F4D6  {BRAND_NAME} Help",
         color=NEUTRAL_COLOR,
     )
-    embed.set_thumbnail(url=embeds_module.BRAND_ICON_URL or user.display_avatar.url)
+    embed.set_thumbnail(url=embeds_module.logo_url() or user.display_avatar.url)
     if user_tier is None:
         embed.description = (
             f"Hey {user.mention}! You don't hold a staff tier, so there are no moderation "

@@ -170,8 +170,10 @@ def describe_error(error: BaseException) -> tuple[str, bool]:
         return f"Missing argument: `{error.param.name}`.", False
     if isinstance(error, (commands.MemberNotFound, commands.UserNotFound)):
         return "I couldn't find that user.", False
-    if isinstance(error, commands.BadArgument):
-        return "One of those arguments wasn't valid.", False
+    if isinstance(error, commands.BadUnionArgument):
+        return "I couldn't find that user. Use a mention or their user ID.", False
+    if isinstance(error, commands.UserInputError):
+        return "One of those arguments wasn't valid. Check `/help` for how to use it.", False
     return (
         f"Something went wrong running that command (`{type(error).__name__}`). Check the logs.",
         True,

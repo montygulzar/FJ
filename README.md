@@ -18,8 +18,8 @@ Dev is **user IDs**. `OWNER_IDS` bypass everything.
 |---|---|---|
 | **Staff** | `STAFF_ROLE_IDS` | `warn` `mute` `tempmute` `unmute` `kick` `tempban` `unban` `cases` `casesearch` `purge` `slowmode` `userinfo` + right-click **User Profile** |
 | **Staff Director** | `STAFF_DIRECTOR_ROLE_IDS` | + `ban` `caseedit` `casedelete` `caseexport` `modstats` `lockdown` `unlock` `addlockdownrole` `removelockdownrole` `clearlockdownroles` + **Accept/Deny appeals** |
-| **Gov** | `GOV_ROLE_IDS` | + `globalban` `globalunban` `globalkick` `globalmute` `globalunmute` `globalblacklist list/add/remove/check` `globalannounce` `globallockdown` `globalunlock` `settings` `setlogchannel` `setserverlogchannel` `setannouncechannel` `testlog` `testserverlog` `setraidprotection` `setwarnthresholds` `backupserver` `restorebackup` |
-| **Dev** | `DEV_USER_IDS` | + `debug` `health` `servers` `addrole` |
+| **Gov** | `GOV_ROLE_IDS` | + `blacklist` `globalban` `globalunban` `globalkick` `globalmute` `globalunmute` `globalblacklist list/add/remove/check` `globalannounce` `globallockdown` `globalunlock` `settings` `setlogchannel` `setserverlogchannel` `setannouncechannel` `testlog` `testserverlog` `setraidprotection` `setwarnthresholds` `backupserver` `restorebackup` |
+| **Dev** | `DEV_USER_IDS` | + `debug` `health` `servers` `addrole` `setlogo` |
 
 Anyone can run `/help`.
 
@@ -42,24 +42,41 @@ anything.
 - whether they're protected
 - their case breakdown and last 3 cases
 
-### Temp bans and appeals
-`/tempban` lifts itself when it expires. Expiry times are stored in Postgres, so
-restarts don't lose them.
+### Ban types
 
-When `APPEALS_CHANNEL_ID` is set, the tempban DM gets a **Submit an appeal**
+| Command | Length | Appeal | DM buttons |
+|---|---|---|---|
+| `/tempban` (Staff+) | Ends on its own | 🟢 Yes | Submit an appeal |
+| `/ban` (Staff Director+) | Permanent | 🟢 Yes | Submit an appeal |
+| `/blacklist` (Gov+) | Permanent | 🔴 **Final** | Message Developer |
+| `/globalban` / global blacklist (Gov+) | Permanent, every server | 🔴 **Final** | Message Developer |
+
+"Message Developer" opens a DM with xe2b, for people who think a blacklist
+was staff abuse. A permanent ban or blacklist also clears any running tempban,
+so the old expiry can't lift it. `/ban`, `/tempban` and `/blacklist` work on
+users who aren't in the server.
+
+### Appeals
+When `APPEALS_CHANNEL_ID` is set, tempban and ban DMs get a **Submit an appeal**
 button:
 1. The user fills in a short form.
 2. The appeal is posted in the appeals channel. The bot fills in their real user
-   ID, account age (new accounts are flagged), previous appeals, case count and
-   the ban reason itself, so none of it can be faked on the form.
-3. Staff Director+ press **Accept** (unbans them, logs a case, DMs them) or
-   **Deny** (optional note, DMs them). Only the first decision counts.
+   ID, account age (new accounts are flagged), previous appeals, case count, the
+   ban reason and the ban type, so none of it can be faked on the form.
+3. Staff Director+ press 🟢 **Accept** (unbans them, logs a case, DMs them a
+   one-use rejoin invite) or 🔴 **Deny** (optional note, DMs them).
 
-Spam limits: the user must still be banned, only one open appeal per ban, and a
-cooldown after a denial (`APPEAL_COOLDOWN_DAYS`).
+Only the first decision counts. An appeal can't be accepted if the user has been
+blacklisted since they sent it. Spam limits: the user must still be banned, only
+one open appeal per ban, and a cooldown after a denial (`APPEAL_COOLDOWN_DAYS`).
 
-**Permanent bans (`/ban`, `/globalban`) can't be appealed through the bot.**
-Their DMs only link to your appeals server if `APPEAL_URL` is set.
+### What the user is told
+The user gets a DM for every action taken on them, e.g. **"🔇 You were muted in
+FJUSA"**. Each DM shows the reason, the duration and when it ends, the case
+number, and the logo in the corner. Warnings say which warning number it is.
+Unbans, expired tempbans and accepted appeals include a **Rejoin** button with a
+fresh one-use invite. Automatic warn escalations, global actions and blacklist
+auto-bans all send DMs too. The staff reply shows whether the DM got through.
 
 ### Global commands (Gov+)
 These apply to every server in `APPROVED_GUILD_IDS` (or every server the bot is
@@ -81,6 +98,12 @@ appeals server, are always skipped.
 - With `APPROVED_GUILD_IDS` and `LEAVE_UNAPPROVED_GUILDS=true`, the bot posts a
   notice and leaves any server it isn't approved for, then DMs the owners.
 - `BLOCKED_USER_IDS` can't use the bot at all.
+
+### Logo
+The FJUSA logo (`assets/fjusa-logo.png`) sits in the corner of DMs, `/help` and
+announcements, and in the footer of every embed. Run **`/setlogo`** once (Dev) to
+make it the bot's avatar, which is where embeds read it from. Alternatively, set
+`LOGO_URL` to a hosted copy.
 
 Every action is recorded as a numbered case, posted to the mod-log channel
 (`/setlogchannel`), and DMed to the user where possible.

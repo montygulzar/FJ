@@ -3,7 +3,7 @@
 **Application:** FJUSA Mod Bot
 **Operator / Data Controller:** xe2b
 **Contact:** DM xe2b on Discord | ID-1195765102725582968
-**Last updated:** 27/07/26
+**Last updated:** 29/09/26
 
 This policy explains what data the Application collects, why, how long it is kept, and what rights you have over it. It applies to everyone who interacts with the Application in any Discord server where it is present.
 

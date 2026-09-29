@@ -107,3 +107,6 @@ async def test_latest_ban_case_and_counts(db):
     assert latest["action_type"] == "tempban" and latest["reason"] == "two"
     assert await database.get_case_counts_for_user(9, 1) == {"warn": 2, "tempban": 1}
     assert await database.get_latest_ban_case(9, 2) is None
+    # A later blacklist supersedes the tempban - that's what makes it unappealable.
+    await database.add_case(9, 1, 50, "blacklist", "four")
+    assert (await database.get_latest_ban_case(9, 1))["action_type"] == "blacklist"

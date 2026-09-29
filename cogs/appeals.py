@@ -1,11 +1,13 @@
 """Ban appeals submitted from the bot's DMs and decided by staff with buttons.
 
-Only temporary bans can be appealed here: a /tempban DM carries a "Submit an appeal"
-button, while permanent bans (/ban, /globalban) never do. Everything identifying the
+Temporary (/tempban) and permanent (/ban) bans can be appealed: their DMs carry a
+"Submit an appeal" button. Blacklist bans (/blacklist, /globalban, the global
+blacklist) are final: their DMs get "Message Developer" instead, and the checks
+below refuse an appeal even if an old button is pressed. Everything identifying the
 appellant comes from the interaction itself (their real account, ID and age), never
 from what they type, and several limits keep appeals from being spammed:
 
-- the user must still be banned, and the ban must still be temporary
+- the user must still be banned, and the ban must not be a blacklist ban
 - one open appeal per user per server (enforced by a unique index)
 - a cooldown after a denial (APPEAL_COOLDOWN_DAYS)
 
@@ -18,12 +20,13 @@ from datetime import datetime, timedelta, timezone
 import discord
 from discord.ext import commands
 
-from config import APPEAL_COOLDOWN_DAYS, APPEAL_URL, APPEALS_CHANNEL_ID, SERVER_DISPLAY_NAME
+from config import APPEAL_COOLDOWN_DAYS, APPEALS_CHANNEL_ID, DEVELOPER_NAME
 from database import (
     count_appeals,
     create_appeal,
     decide_appeal,
     delete_appeal,
+    get_blacklist_entry,
     get_appeal,
     get_case_counts_for_user,
     get_last_denied_appeal,
@@ -43,14 +46,25 @@ from embeds import (
     build_notice_embed,
     clamp,
     format_timestamp,
+    logo_url,
     style_for,
 )
 from guards import is_blocked, member_tier_index, tier_index
-from modlog import record_case, try_dm
+from modlog import record_case_full, try_dm
+from notify import dm_unban
 
 logger = logging.getLogger("modbot.appeals")
 
 NEW_ACCOUNT_AGE = timedelta(days=7)
+
+
+# Ban cases that can never be appealed through the bot.
+FINAL_BAN_TYPES = frozenset({"blacklist", "global_ban"})
+
+
+def is_final_ban(latest_ban_action: str | None, globally_blacklisted: bool) -> bool:
+    """Blacklist bans (local or global) are final; temp and permanent bans can be appealed."""
+    return globally_blacklisted or latest_ban_action in FINAL_BAN_TYPES
 
 
 def appeals_enabled() -> bool:
@@ -83,10 +97,11 @@ async def appeal_blocker(bot: commands.Bot, guild_id: int, user: discord.abc.Use
     except discord.HTTPException:
         return "I couldn't check your ban right now. Please try again later."
 
-    if await get_temp_ban(guild_id, user.id) is None:
-        message = "This ban is permanent and can't be appealed through the bot."
-        if APPEAL_URL:
-            message += f"\nYou can still reach staff through the [{SERVER_DISPLAY_NAME} Appeals server]({APPEAL_URL})."
+    ban_case = await get_latest_ban_case(guild_id, user.id)
+    if is_final_ban(ban_case["action_type"] if ban_case else None, await get_blacklist_entry(user.id) is not None):
+        message = "\u26D4 You were **blacklisted**. Blacklist bans are final and can't be appealed."
+        if DEVELOPER_NAME:
+            message += f"\nIf you believe this was staff abuse, message the developer, **{DEVELOPER_NAME}**."
         return message
 
     open_appeal = await get_open_appeal(guild_id, user.id)
@@ -137,8 +152,8 @@ def build_appeal_embed(
         inline=True,
     )
     embed.add_field(
-        name="Ban ends",
-        value=format_timestamp(unban_at, "R") if unban_at else "Unknown",
+        name="Ban type",
+        value=f"\u23F3 Temporary - ends {format_timestamp(unban_at, 'R')}" if unban_at else "\U0001F528 Permanent",
         inline=True,
     )
     if ban_case is not None:
@@ -164,7 +179,7 @@ def _decision_view(appeal_id: int) -> discord.ui.View:
 def _stamp_decision(message: discord.Message, accepted: bool, moderator: discord.abc.User, note: str | None) -> discord.Embed:
     embed = message.embeds[0] if message.embeds else discord.Embed()
     embed.color = SUCCESS_COLOR if accepted else DANGER_COLOR
-    outcome = "✅ Accepted" if accepted else "❌ Denied"
+    outcome = "🟢 Accepted" if accepted else "🔴 Denied"
     value = f"{outcome} by {moderator.mention} {discord.utils.format_dt(discord.utils.utcnow(), 'R')}"
     if note:
         value += f"\n>>> {clamp(note, 800)}"
@@ -276,10 +291,14 @@ class DenyModal(discord.ui.Modal, title="Deny Appeal"):
         guild = interaction.client.get_guild(appeal["guild_id"])
         retry_at = discord.utils.utcnow() + timedelta(days=APPEAL_COOLDOWN_DAYS)
         dm = discord.Embed(
-            title="❌  Appeal denied",
+            title="\U0001F534  Your appeal was denied",
             description=f"Your appeal (**#{self.appeal_id}**) to **{guild.name if guild else 'the server'}** was denied.",
             color=DANGER_COLOR,
         )
+        if guild is not None:
+            dm.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+        if logo_url():
+            dm.set_thumbnail(url=logo_url())
         if note:
             dm.add_field(name="Staff note", value=f">>> {clamp(note, 1000)}", inline=False)
         if APPEAL_COOLDOWN_DAYS:
@@ -291,12 +310,12 @@ class DenyModal(discord.ui.Modal, title="Deny Appeal"):
             except discord.HTTPException:
                 user = None
         if user is not None:
-            await try_dm(user, branded(dm))
+            await try_dm(user, branded(dm, footer_prefix="Automated notice"))
         await interaction.followup.send(embed=build_notice_embed(f"Appeal #{self.appeal_id} denied."), ephemeral=True)
 
 
 class AppealButton(discord.ui.DynamicItem[discord.ui.Button], template=r"fjusa:appeal:(?P<guild_id>\d+)"):
-    """The button in a tempban DM. Its custom_id carries which server the ban is in."""
+    """The button in a tempban or ban DM. Its custom_id carries which server the ban is in."""
 
     def __init__(self, guild_id: int):
         super().__init__(
@@ -334,8 +353,8 @@ class AppealDecisionButton(
         super().__init__(
             discord.ui.Button(
                 label="Accept" if accept else "Deny",
-                style=discord.ButtonStyle.success if accept else discord.ButtonStyle.danger,
-                emoji="✅" if accept else "❌",
+                style=discord.ButtonStyle.secondary,
+                emoji="🟢" if accept else "🔴",
                 custom_id=f"fjusa:appealdecide:{appeal_id}:{action}",
             )
         )
@@ -370,6 +389,18 @@ class AppealDecisionButton(
             await interaction.response.send_modal(DenyModal(self.appeal_id, interaction.message))
             return
 
+        latest = await get_latest_ban_case(appeal["guild_id"], appeal["user_id"])
+        if is_final_ban(latest["action_type"] if latest else None, await get_blacklist_entry(appeal["user_id"]) is not None):
+            await interaction.response.send_message(
+                embed=build_notice_embed(
+                    "They've been **blacklisted** since this appeal was sent, so it can't be accepted. "
+                    "Deny it, or lift the blacklist first.",
+                    success=False,
+                ),
+                ephemeral=True,
+            )
+            return
+
         if not await decide_appeal(self.appeal_id, "accepted", interaction.user.id, None):
             await interaction.response.send_message(
                 embed=build_notice_embed("Someone already decided this appeal.", success=False), ephemeral=True
@@ -390,33 +421,36 @@ class AppealDecisionButton(
                 user = discord.Object(id=appeal["user_id"])
 
         outcome = None
+        case_id = None
+        unbanned = False
         if guild is None:
             outcome = "The server is no longer available, so nobody was unbanned."
         else:
             reason = f"Appeal #{self.appeal_id} accepted"
             try:
                 await guild.unban(user, reason=audit_reason(moderator, "Appeal accepted", reason))
+                unbanned = True
             except discord.NotFound:
                 outcome = "They were already unbanned."
+                unbanned = True
             except discord.HTTPException as error:
                 outcome = f"Unban failed: `{error}` - unban them manually."
-            await remove_temp_ban(guild.id, appeal["user_id"])
+            if unbanned:
+                # Only once the ban is really gone: dropping the record after a failed
+                # unban would leave a tempban that never expires.
+                await remove_temp_ban(guild.id, appeal["user_id"])
             if outcome is None and isinstance(user, discord.abc.User):
-                await record_case(guild, user, moderator, "unban", reason)
+                _, case_id = await record_case_full(guild, user, moderator, "unban", reason)
 
         await interaction.message.edit(
             embed=_stamp_decision(interaction.message, True, moderator, outcome), view=None
         )
 
-        if isinstance(user, discord.abc.User) and guild is not None:
-            dm = discord.Embed(
-                title="✅  Appeal accepted",
-                description=f"Your appeal (**#{self.appeal_id}**) to **{guild.name}** was accepted. You've been unbanned.",
-                color=SUCCESS_COLOR,
+        if unbanned and isinstance(user, discord.abc.User):
+            await dm_unban(
+                user, guild, f"Appeal #{self.appeal_id} accepted", case_id=case_id,
+                note="\U0001F7E2 Your appeal was **accepted**. Welcome back - please follow the rules.",
             )
-            if guild.icon is not None:
-                dm.set_thumbnail(url=guild.icon.url)
-            await try_dm(user, branded(dm))
 
         await interaction.followup.send(
             embed=build_notice_embed(f"Appeal #{self.appeal_id} accepted." + (f"\n{outcome}" if outcome else "")),

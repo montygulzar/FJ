@@ -148,6 +148,25 @@ async def _check_channel_id(
     return True, f"{channel.mention} is set and reachable{suffix}."
 
 
+async def record_case_full(
+    guild: discord.Guild,
+    target: discord.abc.User,
+    moderator: discord.abc.User,
+    action_type: str,
+    reason: str,
+    *,
+    duration: timedelta | None = None,
+    expires_at: datetime | None = None,
+) -> tuple[discord.Embed, int]:
+    """Save the case, post it to the mod-log channel, and return (embed, case number)."""
+    case_id = await add_case(guild.id, target.id, moderator.id, action_type, reason)
+    embed = build_case_embed(
+        action_type, target, moderator, reason, case_id, duration=duration, expires_at=expires_at
+    )
+    await post_to_log_channel(guild, embed)
+    return embed, case_id
+
+
 async def record_case(
     guild: discord.Guild,
     target: discord.abc.User,
@@ -159,11 +178,9 @@ async def record_case(
     expires_at: datetime | None = None,
 ) -> discord.Embed:
     """Save the case, post it to the mod-log channel, and return the embed."""
-    case_id = await add_case(guild.id, target.id, moderator.id, action_type, reason)
-    embed = build_case_embed(
-        action_type, target, moderator, reason, case_id, duration=duration, expires_at=expires_at
+    embed, _ = await record_case_full(
+        guild, target, moderator, action_type, reason, duration=duration, expires_at=expires_at
     )
-    await post_to_log_channel(guild, embed)
     return embed
 
 

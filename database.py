@@ -127,7 +127,7 @@ SCHEMA_STATEMENTS = (
         PRIMARY KEY (guild_id, channel_id)
     )
     """,
-    # Ban appeals submitted from tempban DMs. One open appeal per user per guild is
+    # Ban appeals submitted from tempban and ban DMs. One open appeal per user per guild is
     # enforced by the partial unique index below, not just by the application.
     """
     CREATE TABLE IF NOT EXISTS appeals (
@@ -756,7 +756,7 @@ async def get_latest_ban_case(guild_id: int, user_id: int) -> asyncpg.Record | N
     return await _fetch_one(
         """
         SELECT * FROM cases
-        WHERE guild_id = $1 AND user_id = $2 AND action_type IN ('ban', 'tempban', 'global_ban')
+        WHERE guild_id = $1 AND user_id = $2 AND action_type IN ('ban', 'tempban', 'blacklist', 'global_ban')
         ORDER BY id DESC LIMIT 1
         """,
         guild_id, user_id,

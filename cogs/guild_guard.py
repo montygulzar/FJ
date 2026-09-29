@@ -11,7 +11,7 @@ from config import (
     OWNER_IDS,
     SERVER_DISPLAY_NAME,
 )
-from embeds import DANGER_COLOR, SUCCESS_COLOR, branded
+from embeds import DANGER_COLOR, SUCCESS_COLOR, branded, logo_url
 
 logger = logging.getLogger("modbot.guild_guard")
 
@@ -26,6 +26,8 @@ def build_unapproved_notice(*, leaving: bool) -> discord.Embed:
         ),
         color=DANGER_COLOR,
     )
+    if logo_url():
+        embed.set_thumbnail(url=logo_url())
     if DEVELOPER_NAME:
         embed.add_field(name="Developer", value=DEVELOPER_NAME, inline=True)
     if DEVELOPER_ID:

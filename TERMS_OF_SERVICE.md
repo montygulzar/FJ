@@ -3,7 +3,7 @@
 **Application:** FJUSA Mod Bot
 **Operator:** xe2b
 **Contact:** DM xe2b on Discord | ID-1195765102725582968
-**Last updated:** 27/07/26
+**Last updated:** 29/09/26
 
 By adding the Application to a Discord server, or by using its commands in a server where it is present, you agree to these terms. If you do not agree, do not use the Application.
 

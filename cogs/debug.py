@@ -64,7 +64,7 @@ class Debug(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.hybrid_command(name="debug", description="Full diagnostic report. Development tier.")
+    @commands.hybrid_command(name="debug", description="Full diagnostic report (Dev only)")
     @has_tier("dev")
     async def debug(self, ctx: commands.Context):
         await ctx.defer(ephemeral=True)

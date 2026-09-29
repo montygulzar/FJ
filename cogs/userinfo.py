@@ -4,7 +4,14 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import MUTE_ROLE_ID
-from database import get_blacklist_entry, get_case_counts_for_user, get_cases_for_user, get_temp_ban
+from cogs.appeals import FINAL_BAN_TYPES
+from database import (
+    get_blacklist_entry,
+    get_case_counts_for_user,
+    get_cases_for_user,
+    get_latest_ban_case,
+    get_temp_ban,
+)
 from embeds import (
     DANGER_COLOR,
     NEUTRAL_COLOR,
@@ -40,8 +47,13 @@ async def build_profile_embed(guild: discord.Guild, user: discord.abc.User) -> d
     if blacklisted:
         status.append(f"\U0001F310 **Globally blacklisted** - {clamp(blacklisted['reason'], 150, empty='no reason')}")
     if ban is not None:
-        until = f", ends {format_timestamp(temp_ban['unban_at'], 'R')}" if temp_ban else " (permanent)"
-        status.append(f"\U0001F528 **Banned here**{until}")
+        latest = await get_latest_ban_case(guild.id, user.id)
+        if latest is not None and latest["action_type"] in FINAL_BAN_TYPES:
+            status.append("\u26D4 **Blacklisted here** - final, can't appeal")
+        elif temp_ban:
+            status.append(f"\u23F3 **Temp banned here** - ends {format_timestamp(temp_ban['unban_at'], 'R')}")
+        else:
+            status.append("\U0001F528 **Banned here** - permanent, can appeal")
     if member is not None:
         if member.is_timed_out():
             status.append(f"⏲️ **Timed out** until {discord.utils.format_dt(member.timed_out_until, 'R')}")

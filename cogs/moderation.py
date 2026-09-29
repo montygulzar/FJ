@@ -7,9 +7,10 @@ from discord.ext import commands
 from config import MUTE_ROLE_ID
 from database import add_temp_ban, get_guild_settings, get_warn_count, remove_temp_ban
 from durations import duration_autocomplete, duration_error, parse_duration
-from embeds import audit_reason, build_ban_dm_embed, build_dm_notice_embed, build_notice_embed, format_duration
+from embeds import audit_reason, build_ban_dm_embed, build_notice_embed, format_duration
 from guards import has_tier, refusal_reason
-from modlog import announce_case, record_case, try_dm
+from modlog import record_case_full, try_dm
+from notify import dm_action, dm_unban
 from reasons import reason_autocomplete
 from views import BanAppealView
 
@@ -17,15 +18,6 @@ MAX_TIMEOUT = timedelta(days=28)  # Discord's own cap on a timeout
 MAX_TEMPBAN = timedelta(days=365)
 
 DURATION_HELP = "How long, e.g. 30m, 2h, 1d12h, 1w (a bare number means minutes)"
-
-
-async def notify_member(
-    member: discord.Member, action_type: str, reason: str, *, expires_at=None
-) -> None:
-    await try_dm(
-        member,
-        build_dm_notice_embed(action_type, member.guild.name, reason, guild=member.guild, expires_at=expires_at),
-    )
 
 
 async def perform_or_report(ctx: commands.Context, action_label: str, coroutine) -> bool:
@@ -37,7 +29,7 @@ async def perform_or_report(ctx: commands.Context, action_label: str, coroutine)
     except discord.HTTPException as error:
         await ctx.send(
             embed=build_notice_embed(
-                f"Sent the notice, but the {action_label} itself failed: `{error}`. "
+                f"The {action_label} failed: `{error}`. "
                 "Check my role position and permissions - nothing was recorded.",
                 success=False,
             )
@@ -49,13 +41,21 @@ async def refuse(ctx: commands.Context, message: str) -> None:
     await ctx.send(embed=build_notice_embed(message, success=False), ephemeral=True)
 
 
+def dm_status(delivered: bool) -> str:
+    return "\U0001F4E8 User notified by DM" if delivered else "\U0001F4ED Couldn't DM the user (DMs closed)"
+
+
 class Moderation(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    def target_member(self, guild: discord.Guild, user: discord.abc.User) -> discord.abc.User:
+        """The Member object when they're in the server (so rank checks apply), else the User."""
+        return guild.get_member(user.id) or user
+
     async def escalate_if_needed(self, ctx: commands.Context, member: discord.Member, warn_count: int) -> None:
         settings = await get_guild_settings(ctx.guild.id)
-        reason = f"Automatic action after reaching {warn_count} warns"
+        reason = f"Automatic action after reaching {warn_count} warnings"
 
         if settings["warn_ban_threshold"] == warn_count:
             action_type = "ban"
@@ -66,15 +66,36 @@ class Moderation(commands.Cog):
         else:
             return
 
-        duration = None
+        # /warn deliberately skips the rank check, but escalation kicks and bans. Without
+        # this, Staff could warn a Staff Director until the bot removed them.
+        if refusal_reason(ctx.author, member, self.bot.user.id):
+            await ctx.send(
+                embed=build_notice_embed(
+                    f"{member.mention} reached {warn_count} warnings, but the automatic {action_type} was "
+                    "skipped because they rank equal to or above you.",
+                    success=False,
+                )
+            )
+            return
+
+        duration = until = None
+        delivered = False
         try:
             if action_type == "ban":
+                view = BanAppealView(ctx.guild.id, appealable=True)
+                delivered = await try_dm(
+                    member,
+                    build_ban_dm_embed(reason, kind="ban", guild=ctx.guild, can_appeal_here=view.has_appeal_button),
+                    view,
+                )
                 await member.ban(reason=reason)
             elif action_type == "kick":
+                delivered = await dm_action(member, "kick", reason, guild=ctx.guild)
                 await member.kick(reason=reason)
             else:
                 duration = timedelta(minutes=max(1, settings["warn_mute_minutes"] or 60))
-                await member.timeout(discord.utils.utcnow() + duration, reason=reason)
+                until = discord.utils.utcnow() + duration
+                await member.timeout(until, reason=reason)
         except discord.HTTPException:
             await ctx.send(
                 embed=build_notice_embed(
@@ -85,7 +106,79 @@ class Moderation(commands.Cog):
             )
             return
 
-        embed = await record_case(ctx.guild, member, self.bot.user, action_type, reason, duration=duration)
+        embed, case_id = await record_case_full(
+            ctx.guild, member, self.bot.user, action_type, reason, duration=duration, expires_at=until
+        )
+        if action_type == "tempmute":
+            delivered = await dm_action(
+                member, "tempmute", reason, guild=ctx.guild, case_id=case_id, duration=duration, expires_at=until
+            )
+        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        await ctx.send(embed=embed)
+
+    async def _ban(
+        self,
+        ctx: commands.Context,
+        user: discord.abc.User,
+        reason: str,
+        *,
+        kind: str,
+        length: timedelta | None = None,
+    ) -> None:
+        """Shared by /tempban, /ban and /blacklist. `kind` decides appealability:
+        tempban and ban can be appealed; blacklist is final (Message Developer only)."""
+        target = self.target_member(ctx.guild, user)
+        refusal = refusal_reason(ctx.author, target, self.bot.user.id)
+        if refusal:
+            await refuse(ctx, refusal)
+            return
+
+        await ctx.defer()
+        unban_at = discord.utils.utcnow() + length if length else None
+        expiry_text = (
+            f"{format_duration(length)} - ends {discord.utils.format_dt(unban_at, 'F')} "
+            f"({discord.utils.format_dt(unban_at, 'R')})"
+            if length else None
+        )
+        final = kind == "blacklist"
+        view = BanAppealView(ctx.guild.id, appealable=not final, contact_developer=final)
+        # DM first: once banned, they may share no server with the bot and DMs fail.
+        delivered = await try_dm(
+            user,
+            build_ban_dm_embed(
+                reason,
+                kind=kind,
+                guild=ctx.guild,
+                unban_at=expiry_text,
+                can_appeal_here=view.has_appeal_button,
+                can_contact_developer=view.has_developer_button,
+            ),
+            view,
+        )
+
+        label = {"tempban": "Tempban", "ban": "Ban", "blacklist": "Blacklist"}[kind]
+        succeeded = await perform_or_report(
+            ctx, label.lower(), ctx.guild.ban(user, reason=audit_reason(ctx.author, label, reason))
+        )
+        if not succeeded:
+            return
+
+        if length:
+            await add_temp_ban(ctx.guild.id, user.id, unban_at)
+        else:
+            # A permanent ban replaces any earlier tempban - otherwise the expiry loop
+            # would lift the permanent ban when the old tempban ran out.
+            await remove_temp_ban(ctx.guild.id, user.id)
+
+        embed, _ = await record_case_full(
+            ctx.guild, user, ctx.author, kind, reason, duration=length, expires_at=unban_at
+        )
+        embed.add_field(
+            name="Appealable",
+            value="\U0001F534 No - final" if final else "\U0001F7E2 Yes",
+            inline=True,
+        )
+        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="kick", description="Kick a member from this server")
@@ -101,42 +194,35 @@ class Moderation(commands.Cog):
             return
 
         await ctx.defer()
-        await notify_member(member, "kick", reason)
+        delivered = await dm_action(member, "kick", reason, guild=ctx.guild)
         succeeded = await perform_or_report(
             ctx, "kick", member.kick(reason=audit_reason(ctx.author, "Kick", reason))
         )
         if succeeded:
-            await announce_case(ctx, member, "kick", reason)
+            embed, _ = await record_case_full(ctx.guild, member, ctx.author, "kick", reason)
+            embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+            await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="ban", description="Permanently ban a member from this server")
-    @app_commands.describe(member="The member to ban", reason="Why they're being banned")
+    @commands.hybrid_command(name="ban", description="Permanently ban a user (they can appeal)")
+    @app_commands.describe(user="The user to ban (doesn't need to be in the server)", reason="Why they're being banned")
     @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("staff_director")
     @commands.bot_has_permissions(ban_members=True)
-    async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-        refusal = refusal_reason(ctx.author, member, self.bot.user.id)
-        if refusal:
-            await refuse(ctx, refusal)
-            return
+    async def ban(self, ctx: commands.Context, user: discord.Member | discord.User, *, reason: str = "No reason provided"):
+        await self._ban(ctx, user, reason, kind="ban")
 
-        await ctx.defer()
-        # DM before removing them from the server. Permanent bans can't be appealed
-        # through the bot, so this view never carries the in-DM appeal button.
-        view = BanAppealView(guild_id=ctx.guild.id)
-        await try_dm(
-            member,
-            build_ban_dm_embed(reason, guild=ctx.guild, can_appeal_here=view.has_appeal_button),
-            view,
-        )
-        succeeded = await perform_or_report(
-            ctx, "ban", member.ban(reason=audit_reason(ctx.author, "Ban", reason))
-        )
-        if succeeded:
-            await announce_case(ctx, member, "ban", reason)
+    @commands.hybrid_command(name="blacklist", description="Permanently ban a user with no appeal - final")
+    @app_commands.describe(user="The user to blacklist (doesn't need to be in the server)", reason="Why they're being blacklisted")
+    @app_commands.autocomplete(reason=reason_autocomplete)
+    @commands.guild_only()
+    @has_tier("gov")
+    @commands.bot_has_permissions(ban_members=True)
+    async def blacklist(self, ctx: commands.Context, user: discord.Member | discord.User, *, reason: str = "No reason provided"):
+        await self._ban(ctx, user, reason, kind="blacklist")
 
-    @commands.hybrid_command(name="tempban", description="Ban a member and automatically unban them later")
-    @app_commands.describe(member="The member to ban", duration=DURATION_HELP, reason="Why they're being banned")
+    @commands.hybrid_command(name="tempban", description="Ban a user and automatically unban them later")
+    @app_commands.describe(user="The user to ban (doesn't need to be in the server)", duration=DURATION_HELP, reason="Why they're being banned")
     @app_commands.autocomplete(duration=duration_autocomplete, reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("staff")
@@ -144,45 +230,16 @@ class Moderation(commands.Cog):
     async def tempban(
         self,
         ctx: commands.Context,
-        member: discord.Member,
+        user: discord.Member | discord.User,
         duration: str,
         *,
         reason: str = "No reason provided",
     ):
-        refusal = refusal_reason(ctx.author, member, self.bot.user.id) or duration_error(duration, MAX_TEMPBAN)
-        if refusal:
-            await refuse(ctx, refusal)
+        problem = duration_error(duration, MAX_TEMPBAN)
+        if problem:
+            await refuse(ctx, problem)
             return
-
-        await ctx.defer()
-        length = parse_duration(duration)
-        unban_at = discord.utils.utcnow() + length
-        # Show the expiry time in the DM so they know exactly when the ban lifts.
-        expiry_str = (
-            f"{format_duration(length)} - ends {discord.utils.format_dt(unban_at, 'F')} "
-            f"({discord.utils.format_dt(unban_at, 'R')})"
-        )
-        # Temporary bans are the only ones that can be appealed through the bot.
-        view = BanAppealView(guild_id=ctx.guild.id, appealable=True)
-        await try_dm(
-            member,
-            build_ban_dm_embed(
-                reason, unban_at=expiry_str, guild=ctx.guild, can_appeal_here=view.has_appeal_button
-            ),
-            view,
-        )
-
-        succeeded = await perform_or_report(
-            ctx, "ban", member.ban(reason=audit_reason(ctx.author, "Tempban", reason))
-        )
-        if not succeeded:
-            return
-
-        await add_temp_ban(ctx.guild.id, member.id, unban_at)
-        embed = await record_case(
-            ctx.guild, member, ctx.author, "tempban", reason, duration=length, expires_at=unban_at
-        )
-        await ctx.send(embed=embed)
+        await self._ban(ctx, user, reason, kind="tempban", length=parse_duration(duration))
 
     @commands.hybrid_command(name="unban", description="Unban a user from this server")
     @app_commands.describe(user="The user to unban", reason="Why they're being unbanned")
@@ -202,7 +259,10 @@ class Moderation(commands.Cog):
             return
 
         await remove_temp_ban(ctx.guild.id, user.id)
-        await announce_case(ctx, user, "unban", reason)
+        embed, case_id = await record_case_full(ctx.guild, user, ctx.author, "unban", reason)
+        delivered = await dm_unban(user, ctx.guild, reason, case_id=case_id)
+        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="warn", description="Warn a member")
     @app_commands.describe(member="The member to warn", reason="Why they're being warned")
@@ -216,11 +276,14 @@ class Moderation(commands.Cog):
             return
 
         await ctx.defer()
-        await notify_member(member, "warn", reason)
-        embed = await record_case(ctx.guild, member, ctx.author, "warn", reason)
-
+        embed, case_id = await record_case_full(ctx.guild, member, ctx.author, "warn", reason)
         warn_count = await get_warn_count(ctx.guild.id, member.id)
+        delivered = await dm_action(
+            member, "warn", reason, guild=ctx.guild, case_id=case_id,
+            note=f"This is warning **#{warn_count}** on your record.",
+        )
         embed.add_field(name="Total warnings", value=f"**{warn_count}**", inline=True)
+        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
         await ctx.send(embed=embed)
         await self.escalate_if_needed(ctx, member, warn_count)
 
@@ -255,9 +318,12 @@ class Moderation(commands.Cog):
         if not succeeded:
             return
 
-        await notify_member(member, "mute", reason)
-        embed = await record_case(ctx.guild, member, ctx.author, "mute", reason)
+        embed, case_id = await record_case_full(ctx.guild, member, ctx.author, "mute", reason)
+        delivered = await dm_action(
+            member, "mute", reason, guild=ctx.guild, case_id=case_id, note="This lasts until a staff member unmutes you."
+        )
         embed.add_field(name="Duration", value="Until unmuted", inline=True)
+        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="tempmute", description="Timeout a member for a set duration")
@@ -288,10 +354,13 @@ class Moderation(commands.Cog):
         if not succeeded:
             return
 
-        await notify_member(member, "tempmute", reason, expires_at=until)
-        embed = await record_case(
+        embed, case_id = await record_case_full(
             ctx.guild, member, ctx.author, "tempmute", reason, duration=length, expires_at=until
         )
+        delivered = await dm_action(
+            member, "tempmute", reason, guild=ctx.guild, case_id=case_id, duration=length, expires_at=until
+        )
+        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="unmute", description="Remove a member's mute role and any active timeout")
@@ -324,8 +393,10 @@ class Moderation(commands.Cog):
                 )
             )
             return
-        await notify_member(member, "unmute", reason)
-        await announce_case(ctx, member, "unmute", reason)
+        embed, case_id = await record_case_full(ctx.guild, member, ctx.author, "unmute", reason)
+        delivered = await dm_action(member, "unmute", reason, guild=ctx.guild, case_id=case_id)
+        embed.add_field(name="Notification", value=dm_status(delivered), inline=False)
+        await ctx.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):

@@ -1,12 +1,15 @@
+from pathlib import Path
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from config import APPROVED_GUILD_IDS
-from embeds import NEUTRAL_COLOR, audit_reason, base_embed, branded, build_notice_embed, clamp
+from embeds import NEUTRAL_COLOR, audit_reason, base_embed, branded, build_notice_embed, clamp, set_brand_icon
 from guards import has_tier
 
 GUILDS_PER_EMBED = 10
+LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "fjusa-logo.png"
 
 
 async def resolve_invite(guild: discord.Guild) -> str | None:
@@ -91,6 +94,9 @@ class Owner(commands.Cog):
         *,
         reason: str = "No reason provided",
     ):
+        if role.is_default() or role.managed:
+            await ctx.send(embed=build_notice_embed("That role is managed by Discord or an integration.", success=False))
+            return
         if role >= ctx.guild.me.top_role:
             await ctx.send(embed=build_notice_embed("That role is at or above my highest role.", success=False))
             return
@@ -100,6 +106,27 @@ class Owner(commands.Cog):
 
         await member.add_roles(role, reason=audit_reason(ctx.author, "Add role", reason))
         await ctx.send(embed=build_notice_embed(f"Added **{role.name}** to {member.mention}."))
+
+
+    @commands.hybrid_command(name="setlogo", description="Set the bot's avatar to the FJUSA logo")
+    @has_tier("dev")
+    async def setlogo(self, ctx: commands.Context):
+        """The avatar doubles as the logo in every embed footer and corner (unless LOGO_URL is set)."""
+        await ctx.defer(ephemeral=True)
+        try:
+            await self.bot.user.edit(avatar=LOGO_PATH.read_bytes())
+        except FileNotFoundError:
+            await ctx.send(embed=build_notice_embed(f"Couldn't find `{LOGO_PATH.name}` in assets/.", success=False))
+            return
+        except discord.HTTPException as error:
+            # Discord rate-limits avatar changes to a couple per hour.
+            await ctx.send(embed=build_notice_embed(f"Discord refused the avatar change: `{error}`", success=False))
+            return
+
+        set_brand_icon(self.bot.user.display_avatar.url)
+        embed = build_notice_embed("The bot's avatar is now the FJUSA logo - it appears on every embed.", title="Logo updated")
+        embed.set_thumbnail(url=self.bot.user.display_avatar.url)
+        await ctx.send(embed=embed, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

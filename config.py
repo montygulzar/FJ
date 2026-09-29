@@ -125,6 +125,10 @@ def _parse_color(name: str, default: int) -> int:
 
 BRAND_COLOR = _parse_color("BRAND_COLOR", 0x1D4ED8)
 
+# Public image URL for the logo shown in embed corners and footers. When empty the
+# bot's own avatar is used - run /setlogo once to make that avatar assets/fjusa-logo.png.
+LOGO_URL = _env("LOGO_URL")
+
 # Name used in ban DMs ("You have been banned from all FJUSA servers").
 SERVER_DISPLAY_NAME = _env("SERVER_DISPLAY_NAME", "FJUSA")
 

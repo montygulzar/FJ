@@ -31,7 +31,7 @@ _TIER_LABELS: dict[str, str] = {
     "staff": "Staff",
     "staff_director": "Staff Director",
     "gov": "Gov",
-    "dev": "Development",
+    "dev": "Dev",
 }
 
 _TIER_DENIALS: dict[str, str] = {

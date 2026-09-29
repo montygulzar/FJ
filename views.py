@@ -1,36 +1,56 @@
 import discord
 
 import embeds as embeds_module
-from config import APPEAL_URL, BRAND_NAME
+from config import APPEAL_URL, BRAND_NAME, DEVELOPER_ID, DEVELOPER_NAME
 from embeds import NEUTRAL_COLOR, WARNING_COLOR, branded, build_case_line, build_notice_embed
+
+
+DEVELOPER_URL = f"https://discord.com/users/{DEVELOPER_ID}" if DEVELOPER_ID else None
 
 
 class BanAppealView(discord.ui.View):
     """Buttons attached to ban DMs.
 
-    - "Submit an appeal" (in-Discord appeal) only when `appealable` - that is, for
-      temporary bans - and an appeals channel is configured. Permanent bans never
-      get it.
-    - "Appeals server" link whenever APPEAL_URL is set and there's no in-Discord option.
+    - "Submit an appeal" (in-Discord appeal) when `appealable` - temporary and
+      permanent bans - and an appeals channel is configured.
+    - "Appeals server" link when there's no in-Discord option but APPEAL_URL is set.
+    - "Message Developer" for final (blacklist / global) bans, which can't be
+      appealed, so someone who was abused by staff still has somewhere to go.
     """
 
-    def __init__(self, guild_id: int | None = None, *, appealable: bool = False) -> None:
+    def __init__(
+        self, guild_id: int | None = None, *, appealable: bool = False, contact_developer: bool = False
+    ) -> None:
         # timeout=None means the buttons stay active indefinitely in the DM.
         super().__init__(timeout=None)
         from cogs.appeals import AppealButton, appeals_enabled
 
         self.has_appeal_button = bool(appealable and guild_id and appeals_enabled())
+        self.has_developer_button = bool(contact_developer and DEVELOPER_URL)
         if self.has_appeal_button:
             self.add_item(AppealButton(guild_id))
-        elif APPEAL_URL:
+        elif appealable and APPEAL_URL:
+            self.add_item(
+                discord.ui.Button(label="Appeals server", style=discord.ButtonStyle.link, url=APPEAL_URL, emoji="\U0001F4DD")
+            )
+        if self.has_developer_button:
             self.add_item(
                 discord.ui.Button(
-                    label="Appeals server",
+                    label=f"Message Developer ({DEVELOPER_NAME})" if DEVELOPER_NAME else "Message Developer",
                     style=discord.ButtonStyle.link,
-                    url=APPEAL_URL,
-                    emoji="\U0001F4DD",
+                    url=DEVELOPER_URL,
+                    emoji="\U0001F4AC",
                 )
             )
+
+
+def link_view(label: str, url: str | None, emoji: str | None = None) -> discord.ui.View | None:
+    """A single link button, e.g. "Rejoin server" on an unban DM. None if there's no URL."""
+    if not url:
+        return None
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(label=label[:80], style=discord.ButtonStyle.link, url=url, emoji=emoji))
+    return view
 
 
 class ConfirmView(discord.ui.View):
@@ -61,14 +81,14 @@ class ConfirmView(discord.ui.View):
             except discord.HTTPException:
                 pass
 
-    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.secondary, emoji="\U0001F7E2")
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.confirmed = True
         self._disable_all()
         self.stop()
         await interaction.response.edit_message(view=self)
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="\U0001F534")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.confirmed = False
         self._disable_all()

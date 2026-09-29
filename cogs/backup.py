@@ -1,9 +1,9 @@
 """Server backup and restore.
 
 /backupserver  - Snapshots all roles, channels, and permissions into a JSON file
-                 and attaches it to the channel. Requires Ownership tier.
+                 and attaches it to the channel. Requires Gov tier.
 /restorebackup - Reads the most recent backup file and recreates any roles or
-                 channels that no longer exist. Requires Ownership tier.
+                 channels that no longer exist. Requires Gov tier.
 
 Backups are intentionally JSON files (not a database table) so they can be kept
 offline and applied to a fresh server without needing database access.
