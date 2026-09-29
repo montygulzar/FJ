@@ -2,6 +2,20 @@
 import os
 import importlib
 
+import pytest
+
+import config as _config_module
+
+
+@pytest.fixture(autouse=True)
+def restore_config_module():
+    """These tests reload `config`, which swaps its values for new objects. Other
+    modules still hold the originals, so put them back to keep later tests honest."""
+    saved = dict(vars(_config_module))
+    yield
+    vars(_config_module).clear()
+    vars(_config_module).update(saved)
+
 
 def _load_config(**env_overrides):
     """Reload config module with specific environment variables."""

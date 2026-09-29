@@ -30,17 +30,17 @@ CODES: dict[str, ErrorCode] = {
     "FJ-CFG-001": ErrorCode(ERROR, "No owner configured",
         "Set OWNER_IDS in .env to your Discord user ID, then restart the bot."),
     "FJ-CFG-002": ErrorCode(ERROR, "No staff tiers configured",
-        "Set STAFF_ROLE_IDS / STAFF_DIRECTOR_ROLE_IDS / GOV_ROLE_IDS in .env - until then only owners can use commands."),
+        "Run `!devset STAFF_ROLE_IDS @Staff` (and STAFF_DIRECTOR / GOV) - until then only owners can use commands."),
     "FJ-CFG-003": ErrorCode(WARNING, "Auto-leave is on with no approved servers",
-        "Add your server IDs to APPROVED_GUILD_IDS, or set LEAVE_UNAPPROVED_GUILDS=false - otherwise the bot leaves everywhere."),
+        "Run `!devset APPROVED_GUILD_IDS <server id>`, or `!devset LEAVE_UNAPPROVED_GUILDS false` - otherwise the bot leaves everywhere."),
     "FJ-CFG-004": ErrorCode(WARNING, "User is both protected and blocked",
         "Remove the user from either PROTECTED_USER_IDS or BLOCKED_USER_IDS."),
     "FJ-CFG-005": ErrorCode(WARNING, "Exempt server isn't approved",
         "Every GLOBAL_ACTION_EXEMPT_GUILD_IDS entry should also be in APPROVED_GUILD_IDS."),
     "FJ-CFG-006": ErrorCode(WARNING, "No mute role set",
-        "Set MUTE_ROLE_ID in .env so /mute works. /tempmute works without it."),
+        "Run `!devset MUTE_ROLE_ID @Muted` (or set it in .env) so /mute works. /tempmute works without it."),
     "FJ-CFG-007": ErrorCode(INFO, "No approved server list",
-        "Global actions reach every server the bot is in. Set APPROVED_GUILD_IDS to limit them to yours."),
+        "Global actions reach every server the bot is in. Run `!devset APPROVED_GUILD_IDS <server id>` to limit them to yours."),
     "FJ-CFG-008": ErrorCode(WARNING, "Appeal alert channel misconfigured",
         "APPEAL_ALERT_CHANNEL_ID needs APPEALS_CHANNEL_ID set too, and must be a different channel."),
 
@@ -76,19 +76,19 @@ CODES: dict[str, ErrorCode] = {
 
     # --- Roles ---------------------------------------------------------------------
     "FJ-ROLE-001": ErrorCode(WARNING, "Configured role doesn't exist",
-        "A role ID in .env isn't in any server the bot is in. Re-copy the role ID (right-click > Copy ID)."),
+        "A configured role ID isn't in any server the bot is in. Fix it with `!devset <SETTING> @role`."),
     "FJ-ROLE-002": ErrorCode(WARNING, "Mute role missing in a server",
         "MUTE_ROLE_ID isn't a role in this server, so /mute won't work here. Mute roles are per server."),
 
     # --- Logs ----------------------------------------------------------------------
     "FJ-LOG-001": ErrorCode(WARNING, "No Mod Logs channel",
-        "Cases aren't being logged. Set MOD_LOGS_CHANNEL_IDS in .env or run /setlogchannel."),
+        "Cases aren't being logged. Run `!devset MOD_LOGS_CHANNEL_IDS #channel`, or /setlogchannel."),
     "FJ-LOG-002": ErrorCode(ERROR, "Bot can't post in a log channel",
         "Give the bot View Channel, Send Messages and Embed Links in the listed channel."),
     "FJ-LOG-003": ErrorCode(WARNING, "Log channel ID not found",
         "A *_LOGS_CHANNEL_IDS entry isn't a channel in any server the bot is in. Re-copy the channel ID."),
     "FJ-LOG-004": ErrorCode(INFO, "Log kind not set up",
-        "These logs aren't going anywhere. Optional - set the matching *_LOGS_CHANNEL_IDS if you want them."),
+        "These logs aren't going anywhere. Optional - e.g. `!devset CHAT_LOGS_CHANNEL_IDS #chat-logs`."),
 
     # --- Appeals ---------------------------------------------------------------------
     "FJ-APL-001": ErrorCode(ERROR, "Appeals channel unreachable",
@@ -100,7 +100,7 @@ CODES: dict[str, ErrorCode] = {
     "FJ-APL-004": ErrorCode(WARNING, "Appeal alert channel unreachable",
         "APPEAL_ALERT_CHANNEL_ID isn't a channel the bot can post in, so nobody is told about new appeals."),
     "FJ-APL-005": ErrorCode(INFO, "In-Discord appeals are off",
-        "Optional. Set APPEALS_CHANNEL_ID to let banned users appeal from their DMs."),
+        "Optional. Run `!devset APPEALS_CHANNEL_ID #appeals` to let banned users appeal from their DMs."),
 
     # --- Background tasks ---------------------------------------------------------------
     "FJ-TASK-001": ErrorCode(ERROR, "Temp-ban expiry has stopped",

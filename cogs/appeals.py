@@ -118,8 +118,10 @@ def tally(votes) -> tuple[list[int], list[int]]:
     return [v["voter_id"] for v in votes if v["approve"]], [v["voter_id"] for v in votes if not v["approve"]]
 
 
-def vote_outcome(approve: int, deny: int, minimum: int = APPEAL_MIN_VOTES) -> str | None:
+def vote_outcome(approve: int, deny: int, minimum: int | None = None) -> str | None:
     """'accepted' / 'denied' once enough votes are in and one side leads, else None."""
+    # Read at call time, not as a default argument, so !devset changes apply at once.
+    minimum = APPEAL_MIN_VOTES if minimum is None else minimum
     if approve + deny < minimum or approve == deny:
         return None
     return "accepted" if approve > deny else "denied"
