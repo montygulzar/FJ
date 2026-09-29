@@ -20,6 +20,7 @@ from database import (
     remove_temp_ban,
 )
 from embeds import (
+    add_detail,
     DANGER_COLOR,
     MUTED_COLOR,
     NEUTRAL_COLOR,
@@ -401,9 +402,9 @@ class GlobalModeration(commands.Cog):
             await ctx.send(embed=build_notice_embed(f"**{user}** is not blacklisted."))
             return
         embed = base_embed("\u26D4  Blacklisted", DANGER_COLOR, f"**{user}**\n`{user.id}`")
-        embed.add_field(name="Reason", value=clamp(entry["reason"]), inline=False)
-        embed.add_field(name="Added by", value=f"<@{entry['moderator_id']}>", inline=True)
-        embed.add_field(name="Added", value=format_timestamp(entry["created_at"], "R"), inline=True)
+        add_detail(embed, "Reason", clamp(entry["reason"]))
+        add_detail(embed, "Added by", f"<@{entry['moderator_id']}>")
+        add_detail(embed, "Added", format_timestamp(entry["created_at"], "R"))
         await ctx.send(embed=embed)
 
     # --- Global announce and lockdown -------------------------------------------
@@ -441,17 +442,9 @@ class GlobalModeration(commands.Cog):
                 failed.append(f"{guild.name} (can't post in #{getattr(channel, 'name', channel_id)})")
 
         summary = base_embed("\U0001F4E3  Global Announcement Sent", SUCCESS_COLOR if posted else DANGER_COLOR)
-        summary.add_field(
-            name=f"Posted in {len(posted)} server(s)",
-            value=clamp("\n".join(f"- {name}" for name in posted), empty="*None*"),
-            inline=False,
-        )
+        add_detail(summary, f"Posted in {len(posted)} server(s)", clamp("\n".join(f"- {name}" for name in posted), empty="*None*"))
         if failed:
-            summary.add_field(
-                name=f"Not posted ({len(failed)})",
-                value=clamp("\n".join(f"- {name}" for name in failed)),
-                inline=False,
-            )
+            add_detail(summary, f"Not posted ({len(failed)})", clamp("\n".join(f"- {name}" for name in failed)))
         await ctx.send(embed=summary)
 
     @commands.hybrid_command(name="globallockdown", description="Lock every text channel in every server")
@@ -492,15 +485,15 @@ class GlobalModeration(commands.Cog):
                 failed.append(f"{guild.name} ({channel_failures} channel(s))")
 
             log_embed = base_embed("\U0001F512  Global Lockdown", MUTED_COLOR, f"{channel_count} channel(s) locked.")
-            log_embed.add_field(name="Reason", value=clamp(reason), inline=False)
-            log_embed.add_field(name="Locked by", value=f"{ctx.author} (`{ctx.author.id}`)", inline=True)
+            add_detail(log_embed, "Reason", clamp(reason))
+            add_detail(log_embed, "Locked by", f"{ctx.author} (`{ctx.author.id}`)")
             await post_to_log_channel(guild, log_embed)
 
         summary = base_embed("\U0001F512  Global Lockdown", MUTED_COLOR)
-        summary.add_field(name="Locked", value=clamp("\n".join(f"- {n}" for n in locked), empty="*Nothing to lock*"), inline=False)
+        add_detail(summary, "Locked", clamp("\n".join(f"- {n}" for n in locked), empty="*Nothing to lock*"))
         if failed:
-            summary.add_field(name="Missing permissions in", value=clamp("\n".join(f"- {n}" for n in failed)), inline=False)
-        summary.add_field(name="Reason", value=clamp(reason), inline=False)
+            add_detail(summary, "Missing permissions in", clamp("\n".join(f"- {n}" for n in failed)))
+        add_detail(summary, "Reason", clamp(reason))
         await ctx.send(embed=summary)
 
     @commands.hybrid_command(name="globalunlock", description="Undo /globallockdown and every other channel lock")
@@ -526,15 +519,15 @@ class GlobalModeration(commands.Cog):
             if channel_count:
                 unlocked.append(f"{guild.name} ({channel_count} channel(s))")
                 log_embed = base_embed("\U0001F513  Global Unlock", SUCCESS_COLOR, f"{channel_count} channel(s) unlocked.")
-                log_embed.add_field(name="Unlocked by", value=f"{ctx.author} (`{ctx.author.id}`)", inline=True)
+                add_detail(log_embed, "Unlocked by", f"{ctx.author} (`{ctx.author.id}`)")
                 await post_to_log_channel(guild, log_embed)
             if channel_failures:
                 failed.append(f"{guild.name} ({channel_failures} channel(s))")
 
         summary = base_embed("\U0001F513  Global Unlock", SUCCESS_COLOR)
-        summary.add_field(name="Unlocked", value=clamp("\n".join(f"- {n}" for n in unlocked), empty="*Nothing was locked*"), inline=False)
+        add_detail(summary, "Unlocked", clamp("\n".join(f"- {n}" for n in unlocked), empty="*Nothing was locked*"))
         if failed:
-            summary.add_field(name="Couldn't fully restore", value=clamp("\n".join(f"- {n}" for n in failed)), inline=False)
+            add_detail(summary, "Couldn't fully restore", clamp("\n".join(f"- {n}" for n in failed)))
         await ctx.send(embed=summary)
 
 

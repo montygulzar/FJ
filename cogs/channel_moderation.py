@@ -12,7 +12,7 @@ from database import (
     remove_lockdown_role,
     save_channel_lock,
 )
-from embeds import MUTED_COLOR, NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, build_notice_embed, clamp
+from embeds import add_detail, MUTED_COLOR, NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, build_notice_embed, clamp
 from guards import has_tier
 from modlog import post_to_log_channel
 
@@ -148,11 +148,11 @@ class ChannelModeration(commands.Cog):
             NEUTRAL_COLOR,
             f"Deleted **{len(deleted)}** message(s){scope} in {ctx.channel.mention}.",
         )
-        embed.add_field(name="Purged by", value=ctx.author.mention, inline=True)
+        add_detail(embed, "Purged by", ctx.author.mention)
         # Only warn about the 14-day limit when no member filter was in play;
         # otherwise a shortfall usually just means the filter didn't match, not an age cap.
         if member is None and len(deleted) < amount:
-            embed.add_field(name="Note", value="Discord can only bulk delete messages under 14 days old.", inline=False)
+            add_detail(embed, "Note", "Discord can only bulk delete messages under 14 days old.")
 
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)
@@ -182,8 +182,8 @@ class ChannelModeration(commands.Cog):
             description += f"\nFailed to apply to: {', '.join(failed_roles)} - check my permissions."
 
         embed = base_embed("\U0001F512  Channel Locked", MUTED_COLOR, description)
-        embed.add_field(name="Reason", value=clamp(reason), inline=False)
-        embed.add_field(name="Locked by", value=ctx.author.mention, inline=True)
+        add_detail(embed, "Reason", clamp(reason))
+        add_detail(embed, "Locked by", ctx.author.mention)
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)
 
@@ -212,7 +212,7 @@ class ChannelModeration(commands.Cog):
                 SUCCESS_COLOR,
                 f"No lock record found for {target.mention} - reset send permissions to default.",
             )
-            embed.add_field(name="Unlocked by", value=ctx.author.mention, inline=True)
+            add_detail(embed, "Unlocked by", ctx.author.mention)
             await ctx.send(embed=embed)
             await post_to_log_channel(ctx.guild, embed)
             return
@@ -225,7 +225,7 @@ class ChannelModeration(commands.Cog):
             description += f"\nFailed to restore: {', '.join(r.mention for r in failed_roles)}"
 
         embed = base_embed("\U0001F513  Channel Unlocked", SUCCESS_COLOR, description)
-        embed.add_field(name="Unlocked by", value=ctx.author.mention, inline=True)
+        add_detail(embed, "Unlocked by", ctx.author.mention)
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)
 

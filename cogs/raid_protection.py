@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 
 from database import get_guild_settings
-from embeds import WARNING_COLOR, base_embed
+from embeds import add_detail, WARNING_COLOR, base_embed
 from modlog import post_to_server_log_channel
 
 
@@ -29,8 +29,8 @@ class RaidProtection(commands.Cog):
             f"{member.mention} joined with an account under **{minimum_age_hours}h** old.",
         )
         embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="Account created", value=discord.utils.format_dt(member.created_at, "R"), inline=True)
-        embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
+        add_detail(embed, "Account created", discord.utils.format_dt(member.created_at, "R"))
+        add_detail(embed, "User ID", f"`{member.id}`")
         await post_to_server_log_channel(member.guild, embed, "security")
 
 

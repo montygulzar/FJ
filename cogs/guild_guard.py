@@ -11,7 +11,7 @@ from config import (
     OWNER_IDS,
     SERVER_DISPLAY_NAME,
 )
-from embeds import DANGER_COLOR, SUCCESS_COLOR, branded, logo_url
+from embeds import add_detail, DANGER_COLOR, SUCCESS_COLOR, branded, logo_url
 from modlog import try_dm
 from notify import create_invite, resolve_user
 
@@ -32,9 +32,9 @@ def build_unapproved_notice(*, leaving: bool) -> discord.Embed:
     if logo_url():
         embed.set_thumbnail(url=logo_url())
     if DEVELOPER_NAME:
-        embed.add_field(name="Developer", value=DEVELOPER_NAME, inline=True)
+        add_detail(embed, "Developer", DEVELOPER_NAME)
     if DEVELOPER_ID:
-        embed.add_field(name="Discord ID", value=f"`{DEVELOPER_ID}`", inline=True)
+        add_detail(embed, "Discord ID", f"`{DEVELOPER_ID}`")
     return branded(embed)
 
 
@@ -90,30 +90,18 @@ def build_unapproved_embed(
     if guild.icon is not None:
         embed.set_thumbnail(url=guild.icon.url)
 
-    server_value = f"{guild.name}\n`{guild.id}`"
-    embed.add_field(name="Server", value=server_value, inline=True)
-    embed.add_field(name="Members", value=str(guild.member_count or 0), inline=True)
+    server_value = f"{guild.name} (`{guild.id}`)"
+    add_detail(embed, "Server", server_value)
+    add_detail(embed, "Members", str(guild.member_count or 0))
 
     if inviter:
-        embed.add_field(
-            name="Added by",
-            value=f"{inviter}\n`{inviter.id}`",
-            inline=True,
-        )
+        add_detail(embed, "Added by", f"{inviter} (`{inviter.id}`)")
     else:
-        embed.add_field(name="Added by", value="Unknown", inline=True)
+        add_detail(embed, "Added by", "Unknown")
 
-    embed.add_field(
-        name="Invite (24h)",
-        value=invite_url if invite_url else "Could not generate invite",
-        inline=False,
-    )
+    add_detail(embed, "Invite (24h)", invite_url if invite_url else "Could not generate invite")
 
-    embed.add_field(
-        name="Action",
-        value="\U0001F6AA Leaving automatically" if leaving else "\u23F8\uFE0F Auto-leave is off - staying",
-        inline=False,
-    )
+    add_detail(embed, "Action", "\U0001F6AA Leaving automatically" if leaving else "\u23F8\uFE0F Auto-leave is off - staying")
     return branded(embed)
 
 
@@ -185,8 +173,8 @@ class GuildGuard(commands.Cog):
         embed = discord.Embed(title="\u2705  Joined Approved Server", color=SUCCESS_COLOR)
         if guild.icon is not None:
             embed.set_thumbnail(url=guild.icon.url)
-        embed.add_field(name="Server", value=f"{guild.name}\n`{guild.id}`", inline=True)
-        embed.add_field(name="Members", value=str(guild.member_count or 0), inline=True)
+        add_detail(embed, "Server", f"{guild.name} (`{guild.id}`)")
+        add_detail(embed, "Members", str(guild.member_count or 0))
         await self.alert_owners(branded(embed))
 
 

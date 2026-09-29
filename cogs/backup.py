@@ -18,7 +18,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from embeds import NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, branded, build_notice_embed, clamp
+from embeds import add_detail, NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, branded, build_notice_embed, clamp
 from guards import has_tier
 from views import request_confirmation
 
@@ -216,14 +216,10 @@ class Backup(commands.Cog):
             NEUTRAL_COLOR,
             f"Snapshot of **{ctx.guild.name}** taken {discord.utils.format_dt(discord.utils.utcnow(), 'f')}.",
         )
-        embed.add_field(name="Roles", value=str(len(snapshot["roles"])), inline=True)
-        embed.add_field(name="Channels", value=str(len(snapshot["channels"])), inline=True)
-        embed.add_field(name="File size", value=f"{file_size_kb:.1f} KB", inline=True)
-        embed.add_field(
-            name="To restore",
-            value="Use `/restorebackup` and attach this JSON file. Missing roles and channels will be recreated.",
-            inline=False,
-        )
+        add_detail(embed, "Roles", str(len(snapshot["roles"])))
+        add_detail(embed, "Channels", str(len(snapshot["channels"])))
+        add_detail(embed, "File size", f"{file_size_kb:.1f} KB")
+        add_detail(embed, "To restore", "Use `/restorebackup` and attach this JSON file. Missing roles and channels will be recreated.")
         branded(embed)
 
         await ctx.send(embed=embed, file=attachment)
@@ -284,22 +280,10 @@ class Backup(commands.Cog):
         # These lists scale with the size of the server, so they have to be clamped:
         # a single over-length field makes Discord reject the whole embed and the
         # moderator would see nothing at all after a restore that did run.
-        embed.add_field(
-            name=f"Roles created ({len(roles_created)})",
-            value=clamp(", ".join(f"`{r}`" for r in roles_created), empty="*None needed*"),
-            inline=False,
-        )
-        embed.add_field(
-            name=f"Channels created ({len(channels_created)})",
-            value=clamp(", ".join(channels_created), empty="*None needed*"),
-            inline=False,
-        )
+        add_detail(embed, f"Roles created ({len(roles_created)})", clamp(", ".join(f"`{r}`" for r in roles_created), empty="*None needed*"))
+        add_detail(embed, f"Channels created ({len(channels_created)})", clamp(", ".join(channels_created), empty="*None needed*"))
         if roles_failed or channels_failed:
-            embed.add_field(
-                name="Failures",
-                value=clamp("\n".join(roles_failed + channels_failed)),
-                inline=False,
-            )
+            add_detail(embed, "Failures", clamp("\n".join(roles_failed + channels_failed)))
         branded(embed)
         await ctx.send(embed=embed)
 

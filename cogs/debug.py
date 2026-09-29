@@ -29,6 +29,7 @@ from embeds import (
     base_embed,
     branded,
     build_notice_embed,
+    card,
     clamp,
 )
 from error_codes import CODES, ERROR, INFO, SEVERITY_ICONS, WARNING, lookup
@@ -75,43 +76,39 @@ def format_age(timestamp: float | None) -> str:
     return f"{time.time() - timestamp:.0f}s ago"
 
 
-SEVERITY_ORDER = {ERROR: 0, WARNING: 1, INFO: 2}
-MAX_FINDINGS_SHOWN = 20
+SEVERITY_HEADINGS = {ERROR: "Errors - fix these first", WARNING: "Warnings", INFO: "Optional"}
 
 
 def build_report_embed(report: "syscheck_module.Report") -> discord.Embed:
     errors, warnings, infos = report.count(ERROR), report.count(WARNING), report.count(INFO)
     if errors:
-        color, headline = DANGER_COLOR, "Problems found - fix the \U0001F534 errors first."
+        color, headline = DANGER_COLOR, "Problems found."
     elif warnings:
         color, headline = WARNING_COLOR, "Working, with a few things worth fixing."
     else:
-        color, headline = SUCCESS_COLOR, "All systems go."
-    embed = discord.Embed(
-        title="\U0001FA7A  System Check",
-        description=(
-            f"{headline}\n\n"
-            f"\u2705 **{report.passed}** passed  \u2022  "
-            f"{SEVERITY_ICONS[ERROR]} **{errors}**  \u2022  "
-            f"{SEVERITY_ICONS[WARNING]} **{warnings}**  \u2022  "
-            f"{SEVERITY_ICONS[INFO]} **{infos}**  (of {report.checks_run} checks)"
-        ),
-        color=color,
-    )
-    findings = sorted(report.findings, key=lambda f: (SEVERITY_ORDER[f.severity], f.code))
-    for finding in findings[:MAX_FINDINGS_SHOWN]:
-        entry = CODES[finding.code]
-        embed.add_field(
-            name=f"{SEVERITY_ICONS[entry.severity]}  {finding.code}  \u2022  {entry.title}",
-            value=clamp(f"{finding.detail}\n**Fix:** {entry.fix}" if finding.detail else f"**Fix:** {entry.fix}", 1024),
-            inline=False,
-        )
-    if len(findings) > MAX_FINDINGS_SHOWN:
-        embed.add_field(
-            name=f"...and {len(findings) - MAX_FINDINGS_SHOWN} more",
-            value="The full list is in the bot's logs (`docker compose logs`).",
-            inline=False,
-        )
+        color, headline = SUCCESS_COLOR, "All systems go. \u2705"
+
+    sections = [
+        f"{headline}\n"
+        f"\u2705 **{report.passed}**/{report.checks_run} passed  \u2022  "
+        f"{SEVERITY_ICONS[ERROR]} {errors}  \u2022  {SEVERITY_ICONS[WARNING]} {warnings}  \u2022  "
+        f"{SEVERITY_ICONS[INFO]} {infos}"
+    ]
+    for severity in (ERROR, WARNING, INFO):
+        findings = sorted((f for f in report.findings if f.severity == severity), key=lambda f: f.code)
+        if not findings:
+            continue
+        lines = [f"**{SEVERITY_ICONS[severity]} {SEVERITY_HEADINGS[severity]}**"]
+        for finding in findings:
+            entry = CODES[finding.code]
+            detail = f" - {finding.detail}" if finding.detail else ""
+            lines.append(f"`{finding.code}` **{entry.title}**{detail}\n\u21B3 {entry.fix}")
+        sections.append("\n".join(lines))
+
+    description = "\n\n".join(sections)
+    if len(description) > 4000:
+        description = description[:3900].rsplit("\n", 1)[0] + "\n\n*...more in the bot's logs (`docker compose logs`).*"
+    embed = discord.Embed(title="\U0001FA7A  System Check", description=description, color=color)
     return branded(embed, footer_prefix="Quote the code when asking for help")
 
 
@@ -120,10 +117,12 @@ def build_code_embed(code: str) -> discord.Embed:
     if entry is None:
         return build_notice_embed(f"`{code}` isn't a known error code. Codes look like `FJ-DB-001`.", success=False)
     color = {ERROR: DANGER_COLOR, WARNING: WARNING_COLOR, INFO: NEUTRAL_COLOR}[entry.severity]
-    embed = discord.Embed(title=f"{SEVERITY_ICONS[entry.severity]}  {code.upper()}", description=f"**{entry.title}**", color=color)
-    embed.add_field(name="Severity", value=entry.severity.title(), inline=True)
-    embed.add_field(name="How to fix", value=entry.fix, inline=False)
-    return branded(embed)
+    return card(
+        f"{SEVERITY_ICONS[entry.severity]}  {code.upper()}",
+        color,
+        body=f"**{entry.title}**",
+        details=[("Severity", entry.severity.title()), ("How to fix", entry.fix)],
+    )
 
 
 async def error_code_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:

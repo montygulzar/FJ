@@ -60,13 +60,12 @@ from embeds import (
     NEUTRAL_COLOR,
     SUCCESS_COLOR,
     WARNING_ICON,
-    branded,
     build_appeal_decision_dm,
     build_appeal_receipt_dm,
     build_notice_embed,
+    card,
     clamp,
     format_timestamp,
-    style_for,
 )
 from guards import is_blocked, member_tier_index, tier_index
 from modlog import record_case_full, try_dm
@@ -188,42 +187,30 @@ def build_appeal_embed(
     prior_appeals: int,
     case_counts: dict[str, int],
 ) -> discord.Embed:
-    embed = discord.Embed(title=f"\U0001F4E8  Ban Appeal #{appeal_id}", color=NEUTRAL_COLOR)
-    embed.set_thumbnail(url=user.display_avatar.url)
-
     # Identity comes from Discord, not the form, so it can't be faked.
-    account_age = discord.utils.utcnow() - user.created_at
-    created = f"{discord.utils.format_dt(user.created_at, 'D')} ({discord.utils.format_dt(user.created_at, 'R')})"
-    if account_age < NEW_ACCOUNT_AGE:
-        created += f"\n{WARNING_ICON} **New account**"
-    embed.add_field(name="User", value=f"{user.mention}\n`{user}`", inline=True)
-    embed.add_field(name="User ID", value=f"`{user.id}`", inline=True)
-    embed.add_field(name="Server", value=f"{guild.name}\n`{guild.id}`", inline=True)
-    embed.add_field(name="Account created", value=created, inline=True)
-    embed.add_field(
-        name="Record here",
-        value=(
-            f"{sum(case_counts.values())} case(s)\n"
-            f"{prior_appeals} previous appeal(s)"
-        ),
-        inline=True,
-    )
-    embed.add_field(
-        name="Ban type",
-        value=f"\u23F3 Temporary - ends {format_timestamp(unban_at, 'R')}" if unban_at else "\U0001F528 Permanent",
-        inline=True,
-    )
+    new_account = discord.utils.utcnow() - user.created_at < NEW_ACCOUNT_AGE
+    created = discord.utils.format_dt(user.created_at, "R") + (f"  {WARNING_ICON} **new account**" if new_account else "")
+    ban_type = f"\u23F3 Temporary - ends {format_timestamp(unban_at, 'R')}" if unban_at else "\U0001F528 Permanent"
+    ban_reason = None
     if ban_case is not None:
-        style = style_for(ban_case["action_type"])
-        embed.add_field(
-            name=f"Ban reason  •  Case #{ban_case['id']}",
-            value=f"{style.icon} {clamp(ban_case['reason'], 900)}",
-            inline=False,
-        )
-    embed.add_field(name="Why should the ban be lifted?", value=f">>> {clamp(answer, 1000)}", inline=False)
-    if extra:
-        embed.add_field(name="Anything else", value=f">>> {clamp(extra, 1000)}", inline=False)
-    return branded(embed, footer_prefix=f"Appeal #{appeal_id}")
+        ban_reason = f"{clamp(ban_case['reason'], 600)}  (Case #{ban_case['id']})"
+    embed = card(
+        f"\U0001F4E8  Ban Appeal #{appeal_id}",
+        NEUTRAL_COLOR,
+        user=user,
+        body=f"{user.mention} is appealing their ban from **{guild.name}**.",
+        details=[
+            ("User", f"{user.mention} (`{user.id}`)"),
+            ("Account created", created),
+            ("Record", f"{sum(case_counts.values())} case(s), {prior_appeals} previous appeal(s)"),
+            ("Ban", ban_type),
+            ("Ban reason", ban_reason),
+            (None, f"\n**Why should the ban be lifted?**\n>>> {clamp(answer, 1500)}"
+                   + (f"\n\n**Anything else**\n{clamp(extra, 800)}" if extra else "")),
+        ],
+        footer=f"Appeal #{appeal_id}  \u2022  ID: {user.id}",
+    )
+    return embed
 
 
 def add_vote_field(embed: discord.Embed, approvers: list[int], deniers: list[int]) -> discord.Embed:
@@ -276,18 +263,19 @@ async def post_appeal_alert(bot, appeal_id: int, user: discord.abc.User, guild, 
     channel = await _fetch_channel(bot, APPEAL_ALERT_CHANNEL_ID)
     if channel is None:
         return
-    embed = discord.Embed(
-        title=f"\U0001F4E8  New Ban Appeal #{appeal_id}",
-        description=(
-            f"A ban appeal has been sent to {message.channel.mention}.\n"
-            f"**[Jump to the appeal]({message.jump_url})** to cast your vote."
-        ),
-        color=NEUTRAL_COLOR,
+    embed = card(
+        f"\U0001F4E8  New Ban Appeal #{appeal_id}",
+        NEUTRAL_COLOR,
+        user=user,
+        body=f"A ban appeal has been sent to {message.channel.mention}.",
+        details=[
+            ("From", f"{user.mention} (`{user.id}`)"),
+            ("Banned from", guild.name if guild else "Unknown"),
+            ("Votes needed", f"{APPEAL_MIN_VOTES}, majority wins"),
+            (None, f"**[Jump to the appeal]({message.jump_url})** to cast your vote"),
+        ],
+        footer=f"Appeal #{appeal_id}",
     )
-    embed.set_thumbnail(url=user.display_avatar.url)
-    embed.add_field(name="User", value=f"{user.mention}\n`{user.id}`", inline=True)
-    embed.add_field(name="Banned from", value=guild.name if guild else "Unknown", inline=True)
-    embed.add_field(name="Votes needed", value=f"{APPEAL_MIN_VOTES}, majority wins", inline=True)
 
     content, mentions = None, discord.AllowedMentions.none()
     if APPEAL_PING_VOTERS and APPEAL_VOTER_ROLE_IDS and getattr(channel, "guild", None):
@@ -299,7 +287,7 @@ async def post_appeal_alert(bot, appeal_id: int, user: discord.abc.User, guild, 
     view = discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(label="Go to appeal", style=discord.ButtonStyle.link, url=message.jump_url, emoji="\U0001F517"))
     try:
-        await channel.send(content=content, embed=branded(embed), view=view, allowed_mentions=mentions)
+        await channel.send(content=content, embed=embed, view=view, allowed_mentions=mentions)
     except discord.HTTPException as error:
         logger.warning("Could not post appeal alert for #%s: %s", appeal_id, error)
 
@@ -308,13 +296,15 @@ async def post_decision_alert(bot, appeal_id: int, accepted: bool, approve: int,
     channel = await _fetch_channel(bot, APPEAL_ALERT_CHANNEL_ID)
     if channel is None:
         return
-    embed = discord.Embed(
-        title=("\U0001F7E2  Appeal #{0} approved" if accepted else "\U0001F534  Appeal #{0} denied").format(appeal_id),
-        description=f"Staff vote finished **{approve}-{deny}**. [View the appeal]({jump_url})",
-        color=SUCCESS_COLOR if accepted else DANGER_COLOR,
+    embed = card(
+        ("\U0001F7E2  Appeal #{0} Approved" if accepted else "\U0001F534  Appeal #{0} Denied").format(appeal_id),
+        SUCCESS_COLOR if accepted else DANGER_COLOR,
+        body=f"The staff vote finished **{approve}-{deny}**.",
+        details=[(None, f"**[View the appeal]({jump_url})**")],
+        footer=f"Appeal #{appeal_id}",
     )
     try:
-        await channel.send(embed=branded(embed))
+        await channel.send(embed=embed)
     except discord.HTTPException as error:
         logger.warning("Could not post decision alert for #%s: %s", appeal_id, error)
 

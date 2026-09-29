@@ -5,7 +5,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-import embeds as embeds_module
 from database import (
     delete_case,
     get_action_counts,
@@ -17,16 +16,17 @@ from database import (
     update_case_reason,
 )
 from embeds import (
+    add_detail,
     AUDIT_REASON_LIMIT,
     MUTED_COLOR,
     NEUTRAL_COLOR,
     base_embed,
     branded,
     build_notice_embed,
+    card,
     clamp,
     format_timestamp,
     style_for,
-    user_line,
 )
 from guards import has_tier
 from modlog import post_to_log_channel
@@ -87,18 +87,19 @@ class CaseManagement(commands.Cog):
                 )
                 return
         style = style_for(case_row["action_type"])
-        embed = discord.Embed(color=style.color)
-        embed.set_author(name=f"{style.icon}  {style.title}  \u2022  Case #{case_row['id']}", icon_url=embeds_module.BRAND_ICON_URL)
-        embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="User", value=user_line(target), inline=True)
-        embed.add_field(name="Moderator", value=f"<@{case_row['moderator_id']}>\n`{case_row['moderator_id']}`", inline=True)
-        embed.add_field(
-            name="When",
-            value=f"{format_timestamp(case_row['created_at'])}\n{format_timestamp(case_row['created_at'], 'R')}",
-            inline=True,
+        embed = card(
+            f"{style.icon}  {style.title}",
+            style.color,
+            user=target,
+            details=[
+                ("User", f"{target.mention} (`{target.id}`)"),
+                ("Moderator", f"<@{case_row['moderator_id']}> (`{case_row['moderator_id']}`)"),
+                ("When", f"{format_timestamp(case_row['created_at'])} ({format_timestamp(case_row['created_at'], 'R')})"),
+                ("Reason", clamp(case_row["reason"], 1000)),
+            ],
+            footer=f"Case #{case_row['id']}  \u2022  ID: {target.id}",
         )
-        embed.add_field(name="Reason", value=f">>> {clamp(case_row['reason'], 1000)}", inline=False)
-        await ctx.send(embed=branded(embed, footer_prefix=f"Case #{case_row['id']}"))
+        await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="caseedit", description="Correct the reason on an existing case")
     @app_commands.describe(case_id="The case number to edit", new_reason="The corrected reason")
@@ -118,8 +119,8 @@ class CaseManagement(commands.Cog):
             return
 
         embed = base_embed(f"\u270F\uFE0F  Case #{case_id} Edited", NEUTRAL_COLOR)
-        embed.add_field(name="New reason", value=clamp(new_reason), inline=False)
-        embed.add_field(name="Edited by", value=ctx.author.mention, inline=True)
+        add_detail(embed, "New reason", clamp(new_reason))
+        add_detail(embed, "Edited by", ctx.author.mention)
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)
 
@@ -133,7 +134,7 @@ class CaseManagement(commands.Cog):
             return
 
         embed = base_embed(f"\U0001F5D1\uFE0F  Case #{case_id} Deleted", MUTED_COLOR)
-        embed.add_field(name="Deleted by", value=ctx.author.mention, inline=True)
+        add_detail(embed, "Deleted by", ctx.author.mention)
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)
 
@@ -180,22 +181,14 @@ class CaseManagement(commands.Cog):
                 breakdown_lines.append(f"{style.icon}  {style.title} - **{row['total']}**")
             breakdown = "\n".join(breakdown_lines)
             embed.description = f"**{total_cases}** cases on record."
-            embed.add_field(name="\U0001F4CB  Breakdown", value=breakdown, inline=False)
+            add_detail(embed, "\U0001F4CB  Breakdown", breakdown)
         else:
             embed.description = "No cases recorded yet."
 
         if top_moderators:
-            embed.add_field(
-                name="\U0001F6E1\uFE0F  Most Active Moderators",
-                value=format_leaderboard(top_moderators, ctx.guild, "moderator_id"),
-                inline=False,
-            )
+            add_detail(embed, "\U0001F6E1\uFE0F  Most Active Moderators", format_leaderboard(top_moderators, ctx.guild, "moderator_id"))
         if most_warned:
-            embed.add_field(
-                name="\u26A0\uFE0F  Most Warned Members",
-                value=format_leaderboard(most_warned, ctx.guild, "user_id"),
-                inline=False,
-            )
+            add_detail(embed, "\u26A0\uFE0F  Most Warned Members", format_leaderboard(most_warned, ctx.guild, "user_id"))
 
         await ctx.send(embed=branded(embed))
 

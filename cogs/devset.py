@@ -15,7 +15,7 @@ from discord.ext import commands
 import database
 import runtime_config
 from config import OWNER_IDS
-from embeds import NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, branded, build_notice_embed, clamp
+from embeds import add_detail, NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, branded, build_notice_embed, clamp
 from modlog import post_to_log_channel
 from runtime_config import SETTINGS, SettingError
 
@@ -58,16 +58,14 @@ class DevSet(commands.Cog):
         )
         groups: dict[str, list[str]] = {}
         for setting in SETTINGS.values():
-            mark = " ✏️" if setting.key in overridden else ""
+            mark = " \u270F\uFE0F" if setting.key in overridden else ""
             groups.setdefault(setting.group, []).append(
-                f"`{setting.key}`{mark}\n{runtime_config.display(setting)}"
+                f"`{setting.key}`{mark} - {runtime_config.display(setting)}"
             )
-        for group, lines in groups.items():
-            embed.add_field(
-                name=f"{GROUP_ICONS.get(group, '')}  {group}",
-                value=clamp("\n".join(lines), 1024),
-                inline=False,
-            )
+        sections = [
+            f"**{GROUP_ICONS.get(group, '')} {group}**\n" + "\n".join(lines) for group, lines in groups.items()
+        ]
+        embed.description = clamp(embed.description + "\n\n" + "\n\n".join(sections), 4096)
         await ctx.send(embed=branded(embed, footer_prefix="Secrets, database and OWNER_IDS stay in .env"))
 
     async def _save(self, ctx: commands.Context, setting, new_value, verb: str) -> None:
@@ -79,10 +77,10 @@ class DevSet(commands.Cog):
     async def _report(self, ctx: commands.Context, setting, before: str, verb: str) -> None:
         after = runtime_config.display(setting)
         embed = base_embed(f"⚙️  {setting.key} {verb}", SUCCESS_COLOR, setting.help)
-        embed.add_field(name="Before", value=clamp(before, 1024), inline=False)
-        embed.add_field(name="After", value=clamp(after, 1024), inline=False)
-        embed.add_field(name="Changed by", value=f"{ctx.author.mention} (`{ctx.author.id}`)", inline=True)
-        embed.add_field(name="Applies", value="Now - and saved for restarts", inline=True)
+        add_detail(embed, "Before", clamp(before, 1024))
+        add_detail(embed, "After", clamp(after, 1024))
+        add_detail(embed, "Changed by", f"{ctx.author.mention} (`{ctx.author.id}`)")
+        add_detail(embed, "Applies", "Now - and saved for restarts")
         await ctx.send(embed=embed)
         if ctx.guild is not None:
             await post_to_log_channel(ctx.guild, embed)  # an audit trail in Mod Logs
@@ -107,8 +105,8 @@ class DevSet(commands.Cog):
             return
         if value is None:
             embed = base_embed(f"⚙️  {setting.key}", NEUTRAL_COLOR, setting.help)
-            embed.add_field(name="Current", value=runtime_config.display(setting), inline=False)
-            embed.add_field(name="Change it", value=USAGE.replace("KEY", setting.key), inline=False)
+            add_detail(embed, "Current", runtime_config.display(setting))
+            add_detail(embed, "Change it", USAGE.replace("KEY", setting.key))
             await ctx.send(embed=embed)
             return
 

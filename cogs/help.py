@@ -4,7 +4,7 @@ from discord.ext import commands
 
 import embeds as embeds_module
 from config import BRAND_NAME, DEVELOPER_NAME, SERVER_DISPLAY_NAME
-from embeds import NEUTRAL_COLOR, branded, build_notice_embed
+from embeds import NEUTRAL_COLOR, add_detail, branded, build_notice_embed
 from guards import _TIERS, member_tier_index, tier_index, tier_label
 
 # Cog class name -> (menu label, emoji, one-line blurb). Cogs missing here have no
@@ -80,14 +80,13 @@ def build_home_embed(bot: commands.Bot, user: discord.abc.User, user_tier: int |
             f"Hey {user.mention}! You're **{tier_label(user_tier)}**, with **{total}** commands available.\n"
             "Pick a category from the menu below."
         )
-        for cog_name, (label, emoji, blurb) in CATEGORIES.items():
-            if cog_name in grouped:
-                embed.add_field(
-                    name=f"{emoji}  {label}",
-                    value=f"{blurb}\n`{len(grouped[cog_name])} command(s)`",
-                    inline=True,
-                )
-    embed.add_field(name="Tiers", value=tier_ladder(user_tier), inline=False)
+        lines = [
+            f"{emoji} **{label}** - {blurb}  `{len(grouped[cog_name])}`"
+            for cog_name, (label, emoji, blurb) in CATEGORIES.items()
+            if cog_name in grouped
+        ]
+        embed.description += "\n\n" + "\n".join(lines)
+    add_detail(embed, "Tiers", tier_ladder(user_tier))
     return branded(embed, footer_prefix=f"Developed by {DEVELOPER_NAME}" if DEVELOPER_NAME else None)
 
 
