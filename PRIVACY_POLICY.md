@@ -1,15 +1,15 @@
 # Privacy Policy
 
-**Application:** NFPD Mod Bot
-**Operator / Data Controller:** ombdeveloping - OMB
-**Contact:** DM ombdeveloping | ID-1285998518213017663
+**Application:** FJUSA Mod Bot
+**Operator / Data Controller:** <your name>
+**Contact:** <your Discord username and ID>
 **Last updated:** 27/07/26
 
 This policy explains what data the Application collects, why, how long it is kept, and what rights you have over it. It applies to everyone who interacts with the Application in any Discord server where it is present.
 
 ## 1. Who is responsible for your data
 
-ombdeveloping operates the Application and acts as the data controller for the information described below. Discord Inc. separately operates the Discord platform and has its own privacy policy, which governs your use of Discord itself.
+the operator operates the Application and acts as the data controller for the information described below. Discord Inc. separately operates the Discord platform and has its own privacy policy, which governs your use of Discord itself.
 
 ## 2. What we store
 
@@ -23,7 +23,9 @@ The Application stores the following, and nothing else:
 - the reason text entered by the moderator
 - the date and time of the action
 
-**Server configuration.** Per server, we store the configured mod-log channel ID, lockdown role ID, new-account alert threshold, and automatic warn-escalation thresholds.
+**Global blacklist.** For users blacklisted across all servers, we store their user ID, the moderator's user ID, the reason, and when they were added. The record is deleted when they are removed from the blacklist or globally unbanned.
+
+**Server configuration.** Per server, we store the configured mod-log and announcement channel IDs, lockdown role ID, new-account alert threshold, and automatic warn-escalation thresholds.
 
 **Scheduled actions.** For temporary bans, we store the server ID, user ID, and the time the ban should be lifted. This record is deleted once the ban expires or is manually lifted.
 
@@ -57,11 +59,11 @@ We consider this proportionate because the data is limited to the minimum needed
 
 Moderation records for a server are visible to members of that server who hold moderation permissions, via the Application's commands. Records are not shared across servers except where a global action (an action applied across every server the Application is in) has been taken, in which case a record of that action exists in each affected server.
 
-Records are also accessible to ombdeveloping as the operator, for the purposes of maintaining and troubleshooting the Application.
+Records are also accessible to the operator as the operator, for the purposes of maintaining and troubleshooting the Application.
 
 ## 7. Where your data is stored
 
-Data is held in a self-hosted PostgreSQL database running on a private server operated directly by ombdeveloping. It is not held by a third-party application-hosting provider.
+Data is held in a self-hosted PostgreSQL database running on a private server operated directly by the operator. It is not held by a third-party application-hosting provider.
 
 <!-- ACTION REQUIRED: replace the bracketed text below with the country your server is
      physically located in, then delete this comment. Leaving it unspecified is a
@@ -74,13 +76,14 @@ The server is located in [COUNTRY]. Where this is outside the UK or EEA, transfe
 - **Moderation records:** retained for an indefinite amount of time from the date of the action, then deleted, unless a moderator deletes the record sooner.
 - **Scheduled action records:** deleted as soon as the action completes.
 - **Channel lock records:** deleted as soon as the channel is unlocked.
+- **Global blacklist entries:** retained until removed from the blacklist or globally unbanned.
 - **Server configuration:** retained while the Application is a member of the server, and deleted on request after it leaves.
 
 ## 9. Your rights
 
 Under UK GDPR you have the right to request access to the data we hold about you, correction of inaccurate data, erasure, restriction of processing, and to object to processing based on legitimate interests. You also have the right to lodge a complaint with the Information Commissioner's Office (ico.org.uk).
 
-To exercise any of these rights, contact us at ombdeveloping, ID-1285998518213017663. We will respond within one month. You will need to provide your Discord user ID so we can locate your records.
+To exercise any of these rights, contact us at the operator, ID-1285998518213017663. We will respond within one month. You will need to provide your Discord user ID so we can locate your records.
 
 Note that erasing a moderation record removes the record of an enforcement decision. Where we have a compelling legitimate ground to retain a record (for example, an active ban that would otherwise be unenforceable), we may refuse an erasure request and will explain why.
 

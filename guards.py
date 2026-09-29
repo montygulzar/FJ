@@ -3,50 +3,42 @@ from discord.ext import commands
 
 from config import (
     APPROVED_GUILD_IDS,
-    BAN_PERM_ROLE_IDS,
     BLOCKED_USER_IDS,
-    CR_ROLE_IDS,
-    DEVELOPMENT_USER_IDS,
-    MANAGEMENT_ROLE_IDS,
-    MOD_ROLE_IDS,
+    DEV_USER_IDS,
+    GOV_ROLE_IDS,
     OWNER_IDS,
-    OWNERSHIP_ROLE_IDS,
     PROTECTED_USER_IDS,
+    STAFF_DIRECTOR_ROLE_IDS,
+    STAFF_ROLE_IDS,
 )
 
 # Tier hierarchy, lowest to highest. Each tier grants access to everything
 # at its level and below.
-_TIERS = ("mod", "ban_perm", "cr", "management", "ownership", "development")
+_TIERS = ("staff", "staff_director", "gov", "dev")
 
 _TIER_ROLE_IDS: dict[str, set[int]] = {
-    "mod": MOD_ROLE_IDS,
-    "ban_perm": BAN_PERM_ROLE_IDS,
-    "cr": CR_ROLE_IDS,
-    "management": MANAGEMENT_ROLE_IDS,
-    "ownership": OWNERSHIP_ROLE_IDS,
+    "staff": STAFF_ROLE_IDS,
+    "staff_director": STAFF_DIRECTOR_ROLE_IDS,
+    "gov": GOV_ROLE_IDS,
 }
 
 # Tiers checked by user ID instead of role ID.
 _TIER_USER_IDS: dict[str, set[int]] = {
-    "development": DEVELOPMENT_USER_IDS,
+    "dev": DEV_USER_IDS,
 }
 
 _TIER_LABELS: dict[str, str] = {
-    "mod": "Moderator",
-    "ban_perm": "Ban Permissions",
-    "cr": "Chief Ranks",
-    "management": "Management Team",
-    "ownership": "Ownership",
-    "development": "Development",
+    "staff": "Staff",
+    "staff_director": "Staff Director",
+    "gov": "Gov",
+    "dev": "Development",
 }
 
 _TIER_DENIALS: dict[str, str] = {
-    "mod": "Only users who are part of the **North Florida Moderation Team+** can use this command.",
-    "ban_perm": "Only members with **Ban Permissions+** can use this command.",
-    "cr": "Only users who are **Chief Ranks+** can use this command.",
-    "management": "Only users who are **Management Team+** can use this command.",
-    "ownership": "Only members with **Ownership+** can use this command.",
-    "development": "Can't use this shit lil boi, bot dev only.",
+    "staff": "Only users who are part of the **FJUSA Staff Team+** can use this command.",
+    "staff_director": "Only users who are **Staff Director+** can use this command.",
+    "gov": "Only users who are **Gov+** can use this command.",
+    "dev": "Can't use this shit lil boi, bot dev only.",
 }
 
 
@@ -58,7 +50,7 @@ def has_tier(tier: str):
     """Command check requiring the user to hold a role at *tier* or above.
 
     OWNER_IDS always pass. The tier hierarchy from lowest to highest is:
-    mod → ban_perm → cr → management → ownership → development.
+    staff → staff_director → gov → dev.
     """
     tier_index = _TIERS.index(tier)
     denial = _TIER_DENIALS[tier]
@@ -101,7 +93,7 @@ def is_bot_owner():
     """Command check restricting a command to OWNER_IDS.
 
     Kept for backward compatibility. New commands should use
-    has_tier("development") instead.
+    has_tier("dev") instead.
     """
 
     async def predicate(ctx: commands.Context) -> bool:

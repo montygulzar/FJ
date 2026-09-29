@@ -238,7 +238,7 @@ async def run() -> int:
     install_signal_handlers(shutdown)
 
     logger.info(
-        "Starting NFPD moderation bot (version=%s commit=%s)",
+        "Starting FJUSA moderation bot (version=%s commit=%s)",
         config.APP_VERSION, config.GIT_COMMIT,
     )
 

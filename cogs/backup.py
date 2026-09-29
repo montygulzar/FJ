@@ -198,7 +198,7 @@ class Backup(commands.Cog):
 
     @commands.hybrid_command(name="backupserver", description="Snapshot all server roles and channels to a JSON file")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("gov")
     @commands.bot_has_permissions(manage_guild=True)
     async def backupserver(self, ctx: commands.Context) -> None:
         await ctx.defer()
@@ -236,7 +236,7 @@ class Backup(commands.Cog):
     )
     @app_commands.describe(backup_file="The .json backup file created by /backupserver")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("gov")
     @commands.bot_has_permissions(manage_roles=True, manage_channels=True)
     async def restorebackup(self, ctx: commands.Context, backup_file: discord.Attachment) -> None:
         if not backup_file.filename.endswith(".json"):

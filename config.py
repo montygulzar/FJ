@@ -105,27 +105,37 @@ COMMAND_PREFIX = os.environ.get("COMMAND_PREFIX", "!")
 if not COMMAND_PREFIX:
     _errors.append("COMMAND_PREFIX must not be empty - prefix commands would be unusable.")
 
-BRAND_NAME = os.environ.get("BRAND_NAME", "Moderation")
+BRAND_NAME = os.environ.get("BRAND_NAME", "FJUSA Mod Bot")
+
+# Name used in ban DMs ("You have been banned from all FJUSA servers").
+SERVER_DISPLAY_NAME = _env("SERVER_DISPLAY_NAME", "FJUSA")
+
+# Shown when the bot leaves an unapproved server, e.g. "yourname (Discord ID 123...)".
+DEVELOPER_CONTACT = _env("DEVELOPER_CONTACT")
+
+# Invite to the appeals server. Ban DMs show an "Appeal your ban" button when set.
+APPEAL_URL = _env("APPEAL_URL")
+if APPEAL_URL and not APPEAL_URL.startswith(("https://", "http://")):
+    _errors.append(f"APPEAL_URL must be a full link starting with https://, got: {APPEAL_URL!r}")
 
 OWNER_IDS = _parse_id_list("OWNER_IDS")
 
 # --- Tiered role system -------------------------------------------------------
-# Six tiers, each inheriting every tier below it:
-#   DEVELOPMENT > OWNERSHIP > MANAGEMENT > CR > BAN_PERM > MOD
+# Four tiers, each inheriting every tier below it:
+#   DEV > GOV > STAFF_DIRECTOR > STAFF
 #
 # A user with a role in a higher tier can use every command available to lower
 # tiers. OWNER_IDS (user IDs, not role IDs) bypass the tier system entirely.
-# DEVELOPMENT_USER_IDS is checked by user ID (like OWNER_IDS), not by role.
-MOD_ROLE_IDS = _parse_id_list("MOD_ROLE_IDS")
-BAN_PERM_ROLE_IDS = _parse_id_list("BAN_PERM_ROLE_IDS")
-CR_ROLE_IDS = _parse_id_list("CR_ROLE_IDS", "GLOBAL_ACTION_ROLE_IDS", "GLOBAL_ACTION_ROLE_ID")
-MANAGEMENT_ROLE_IDS = _parse_id_list("MANAGEMENT_ROLE_IDS")
-OWNERSHIP_ROLE_IDS = _parse_id_list("OWNERSHIP_ROLE_IDS")
-DEVELOPMENT_USER_IDS = _parse_id_list("DEVELOPMENT_USER_IDS")
+# DEV_USER_IDS is checked by user ID (like OWNER_IDS), not by role.
+STAFF_ROLE_IDS = _parse_id_list("STAFF_ROLE_IDS")
+STAFF_DIRECTOR_ROLE_IDS = _parse_id_list("STAFF_DIRECTOR_ROLE_IDS")
+GOV_ROLE_IDS = _parse_id_list("GOV_ROLE_IDS")
+DEV_USER_IDS = _parse_id_list("DEV_USER_IDS")
 
-# Backward-compat alias so existing code referencing GLOBAL_ACTION_ROLE_IDS
-# (e.g. diagnostics) keeps working without changes.
-GLOBAL_ACTION_ROLE_IDS = CR_ROLE_IDS
+# Role given by /mute and removed by /unmute. /tempmute uses Discord's timeout
+# instead and needs no role. The ID must be the same role in every server, or
+# /mute reports that the role is missing there.
+MUTE_ROLE_ID = _parse_int("MUTE_ROLE_ID", 0, minimum=0)
 
 # Servers that global actions may be run from and applied to. Leaving this empty means
 # global actions reach EVERY server the bot is in, including ones added without your knowledge.

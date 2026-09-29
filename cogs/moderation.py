@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from config import MUTE_ROLE_ID
 from database import add_temp_ban, get_guild_settings, get_warn_count, remove_temp_ban
 from embeds import audit_reason, build_ban_dm_embed, build_dm_notice_embed, build_notice_embed
 from guards import has_tier, refusal_reason
@@ -48,7 +49,7 @@ class Moderation(commands.Cog):
         elif settings["warn_kick_threshold"] == warn_count:
             action_type = "kick"
         elif settings["warn_mute_threshold"] == warn_count:
-            action_type = "mute"
+            action_type = "tempmute"  # Escalation mutes are timeouts, not the mute role.
         else:
             return
 
@@ -76,7 +77,7 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(name="kick", description="Kick a member from this server")
     @app_commands.describe(member="The member to kick", reason="Why they're being kicked")
     @commands.guild_only()
-    @has_tier("mod")
+    @has_tier("staff")
     @commands.bot_has_permissions(kick_members=True)
     async def kick(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         refusal = refusal_reason(ctx.author, member, self.bot.user.id)
@@ -95,7 +96,7 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(name="ban", description="Permanently ban a member from this server")
     @app_commands.describe(member="The member to ban", reason="Why they're being banned")
     @commands.guild_only()
-    @has_tier("ban_perm")
+    @has_tier("staff_director")
     @commands.bot_has_permissions(ban_members=True)
     async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         refusal = refusal_reason(ctx.author, member, self.bot.user.id)
@@ -119,7 +120,7 @@ class Moderation(commands.Cog):
         reason="Why they're being banned",
     )
     @commands.guild_only()
-    @has_tier("mod")
+    @has_tier("staff")
     @commands.bot_has_permissions(ban_members=True)
     async def tempban(
         self,
@@ -154,7 +155,7 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(name="unban", description="Unban a user from this server")
     @app_commands.describe(user="The user to unban", reason="Why they're being unbanned")
     @commands.guild_only()
-    @has_tier("mod")
+    @has_tier("staff")
     @commands.bot_has_permissions(ban_members=True)
     async def unban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         await ctx.defer()
@@ -173,7 +174,7 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(name="warn", description="Warn a member")
     @app_commands.describe(member="The member to warn", reason="Why they're being warned")
     @commands.guild_only()
-    @has_tier("mod")
+    @has_tier("staff")
     async def warn(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         refusal = refusal_reason(ctx.author, member, self.bot.user.id, check_hierarchy=False)
         if refusal:
@@ -187,16 +188,53 @@ class Moderation(commands.Cog):
         warn_count = await get_warn_count(ctx.guild.id, member.id)
         await self.escalate_if_needed(ctx, member, warn_count)
 
-    @commands.hybrid_command(name="mute", description="Timeout a member for a set duration")
+    @commands.hybrid_command(name="mute", description="Mute a member with the mute role until they are unmuted")
+    @app_commands.describe(member="The member to mute", reason="Why they're being muted")
+    @commands.guild_only()
+    @has_tier("staff")
+    @commands.bot_has_permissions(manage_roles=True)
+    async def mute(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+        refusal = refusal_reason(ctx.author, member, self.bot.user.id)
+        if refusal:
+            await ctx.send(embed=build_notice_embed(refusal, success=False))
+            return
+
+        mute_role = ctx.guild.get_role(MUTE_ROLE_ID) if MUTE_ROLE_ID else None
+        if mute_role is None:
+            await ctx.send(
+                embed=build_notice_embed(
+                    "No mute role is set up for this server. Set `MUTE_ROLE_ID` in the bot's .env, "
+                    "or use `/tempmute` instead.",
+                    success=False,
+                )
+            )
+            return
+        if mute_role in member.roles:
+            await ctx.send(embed=build_notice_embed(f"{member.mention} is already muted.", success=False))
+            return
+
+        await ctx.defer()
+        succeeded = await perform_or_report(
+            ctx, "mute", member.add_roles(mute_role, reason=audit_reason(ctx.author, "Mute", reason))
+        )
+        if not succeeded:
+            return
+
+        await notify_member(member, "mute", ctx.guild.name, reason)
+        embed = await record_case(ctx.guild, member, ctx.author, "mute", reason)
+        embed.add_field(name="Expires", value="Never - until unmuted", inline=True)
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(name="tempmute", description="Timeout a member for a set duration")
     @app_commands.describe(
         member="The member to mute",
         duration_minutes="How long to mute for, in minutes (max 40320 = 28 days)",
         reason="Why they're being muted",
     )
     @commands.guild_only()
-    @has_tier("mod")
+    @has_tier("staff")
     @commands.bot_has_permissions(moderate_members=True)
-    async def mute(
+    async def tempmute(
         self,
         ctx: commands.Context,
         member: discord.Member,
@@ -212,29 +250,36 @@ class Moderation(commands.Cog):
         await ctx.defer()
         until = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
         succeeded = await perform_or_report(
-            ctx, "mute", member.timeout(until, reason=audit_reason(ctx.author, "Mute", reason))
+            ctx, "mute", member.timeout(until, reason=audit_reason(ctx.author, "Tempmute", reason))
         )
         if not succeeded:
             return
 
-        await notify_member(member, "mute", ctx.guild.name, reason)
-        embed = await record_case(ctx.guild, member, ctx.author, "mute", reason)
+        await notify_member(member, "tempmute", ctx.guild.name, reason)
+        embed = await record_case(ctx.guild, member, ctx.author, "tempmute", reason)
         embed.add_field(name="Expires", value=discord.utils.format_dt(until, style="R"), inline=True)
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="unmute", description="Remove an active timeout from a member")
+    @commands.hybrid_command(name="unmute", description="Remove a member's mute role and any active timeout")
     @app_commands.describe(member="The member to unmute", reason="Why they're being unmuted")
     @commands.guild_only()
-    @has_tier("mod")
-    @commands.bot_has_permissions(moderate_members=True)
+    @has_tier("staff")
+    @commands.bot_has_permissions(moderate_members=True, manage_roles=True)
     async def unmute(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-        if member.timed_out_until is None:
+        mute_role = ctx.guild.get_role(MUTE_ROLE_ID) if MUTE_ROLE_ID else None
+        has_mute_role = mute_role is not None and mute_role in member.roles
+        is_timed_out = member.is_timed_out()
+        if not has_mute_role and not is_timed_out:
             await ctx.send(embed=build_notice_embed(f"{member.mention} isn't currently muted.", success=False))
             return
 
         await ctx.defer()
+        audit = audit_reason(ctx.author, "Unmute", reason)
         try:
-            await member.timeout(None, reason=audit_reason(ctx.author, "Unmute", reason))
+            if is_timed_out:
+                await member.timeout(None, reason=audit)
+            if has_mute_role:
+                await member.remove_roles(mute_role, reason=audit)
         except discord.HTTPException as error:
             await ctx.send(
                 embed=build_notice_embed(

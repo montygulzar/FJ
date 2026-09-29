@@ -65,7 +65,7 @@ class Debug(commands.Cog):
         self.bot = bot
 
     @commands.hybrid_command(name="debug", description="Full diagnostic report. Development tier.")
-    @has_tier("development")
+    @has_tier("dev")
     async def debug(self, ctx: commands.Context):
         await ctx.defer(ephemeral=True)
         embeds = [
@@ -77,7 +77,7 @@ class Debug(commands.Cog):
         await ctx.send(embeds=embeds, ephemeral=True)
 
     @commands.hybrid_command(name="health", description="Quick liveness summary: database, gateway, uptime.")
-    @has_tier("development")
+    @has_tier("dev")
     async def health(self, ctx: commands.Context):
         """The short version of /debug, for a fast check that everything is up."""
         await ctx.defer(ephemeral=True)
@@ -193,9 +193,13 @@ class Debug(commands.Cog):
 
         temp_ban_count = await database.get_active_temp_ban_count() if db_ok else 0
         total_cases = await database.get_total_case_count() if db_ok else 0
+        blacklist_count = await database.get_blacklist_count() if db_ok else 0
         embed.add_field(
             name="Data",
-            value=f"Cases logged: **{total_cases}**\nActive temp-bans: **{temp_ban_count}**",
+            value=(
+                f"Cases logged: **{total_cases}**\nActive temp-bans: **{temp_ban_count}**\n"
+                f"Globally blacklisted: **{blacklist_count}**"
+            ),
             inline=True,
         )
 
@@ -255,12 +259,11 @@ class Debug(commands.Cog):
             name="Access control",
             value=(
                 f"Owners configured: **{len(config.OWNER_IDS)}**\n"
-                f"Mod roles: **{len(config.MOD_ROLE_IDS)}**\n"
-                f"Ban Perm roles: **{len(config.BAN_PERM_ROLE_IDS)}**\n"
-                f"CR roles: **{len(config.CR_ROLE_IDS)}**\n"
-                f"Management roles: **{len(config.MANAGEMENT_ROLE_IDS)}**\n"
-                f"Ownership roles: **{len(config.OWNERSHIP_ROLE_IDS)}**\n"
-                f"Development users: **{len(config.DEVELOPMENT_USER_IDS)}**\n"
+                f"Staff roles: **{len(config.STAFF_ROLE_IDS)}**\n"
+                f"Staff Director roles: **{len(config.STAFF_DIRECTOR_ROLE_IDS)}**\n"
+                f"Gov roles: **{len(config.GOV_ROLE_IDS)}**\n"
+                f"Dev users: **{len(config.DEV_USER_IDS)}**\n"
+                f"Mute role: **{'set' if config.MUTE_ROLE_ID else 'not set'}**\n"
                 f"Approved servers: **{len(config.APPROVED_GUILD_IDS) or 'all (no allowlist)'}**\n"
                 f"Global-exempt servers: **{len(config.GLOBAL_ACTION_EXEMPT_GUILD_IDS) or 'none'}**\n"
                 f"Auto-leave unapproved: **{config.LEAVE_UNAPPROVED_GUILDS}**\n"

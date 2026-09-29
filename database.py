@@ -42,7 +42,7 @@ _last_failure: str | None = None
 
 # Advisory-lock key for schema setup. Arbitrary but must stay stable: it stops two
 # containers started at the same moment from running CREATE TABLE concurrently.
-_SCHEMA_LOCK_KEY = 0x4E46_5044  # "NFPD"
+_SCHEMA_LOCK_KEY = 0x464A_5553  # "FJUS"
 
 # Transient faults: the connection died or the server is not accepting work yet.
 # Retrying these is worthwhile.
@@ -99,7 +99,8 @@ SCHEMA_STATEMENTS = (
         warn_mute_threshold        INTEGER,
         warn_mute_minutes          INTEGER,
         warn_kick_threshold        INTEGER,
-        warn_ban_threshold         INTEGER
+        warn_ban_threshold         INTEGER,
+        announce_channel_id        BIGINT
     )
     """,
     """
@@ -126,6 +127,16 @@ SCHEMA_STATEMENTS = (
         PRIMARY KEY (guild_id, channel_id)
     )
     """,
+    # Users banned everywhere, including servers the bot joins later: the join
+    # listener in cogs/global_moderation.py bans anyone listed here on arrival.
+    """
+    CREATE TABLE IF NOT EXISTS global_blacklist (
+        user_id       BIGINT PRIMARY KEY,
+        moderator_id  BIGINT NOT NULL,
+        reason        TEXT,
+        created_at    TEXT NOT NULL
+    )
+    """,
 )
 
 # Columns added after the first release. Applied with ADD COLUMN IF NOT EXISTS so an
@@ -137,6 +148,7 @@ MIGRATION_STATEMENTS = (
     "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS warn_mute_minutes     INTEGER",
     "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS warn_kick_threshold   INTEGER",
     "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS warn_ban_threshold    INTEGER",
+    "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS announce_channel_id   BIGINT",
 )
 
 
@@ -151,7 +163,7 @@ async def _new_pool() -> asyncpg.Pool:
         max_inactive_connection_lifetime=config.DB_MAX_INACTIVE_CONNECTION_LIFETIME,
         # Shows up in pg_stat_activity, so it is obvious which client owns a
         # connection when inspecting the shared Postgres instance.
-        server_settings={"application_name": "nfpd-mod-bot"},
+        server_settings={"application_name": "fjusa-mod-bot"},
     )
 
 
@@ -517,6 +529,7 @@ DEFAULT_SETTINGS: dict = {
     "warn_mute_minutes": None,
     "warn_kick_threshold": None,
     "warn_ban_threshold": None,
+    "announce_channel_id": None,
 }
 
 # Columns _upsert_settings is allowed to write. The column name is interpolated into
@@ -552,6 +565,10 @@ async def set_log_channel(guild_id: int, channel_id: int) -> None:
 
 async def set_server_log_channel(guild_id: int, channel_id: int | None) -> None:
     await _upsert_settings(guild_id, "server_log_channel_id", channel_id)
+
+
+async def set_announce_channel(guild_id: int, channel_id: int | None) -> None:
+    await _upsert_settings(guild_id, "announce_channel_id", channel_id)
 
 
 async def set_lockdown_role(guild_id: int, role_id: int | None) -> None:
@@ -645,6 +662,43 @@ async def get_expired_temp_bans(now: datetime) -> list[asyncpg.Record]:
     )
 
 
+# --- Global blacklist ---------------------------------------------------------
+
+async def add_blacklist(user_id: int, moderator_id: int, reason: str) -> None:
+    """Add or update a blacklist entry. Re-adding refreshes the reason and moderator."""
+    await _execute(
+        """
+        INSERT INTO global_blacklist (user_id, moderator_id, reason, created_at)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (user_id) DO UPDATE SET
+            moderator_id = EXCLUDED.moderator_id,
+            reason       = EXCLUDED.reason,
+            created_at   = EXCLUDED.created_at
+        """,
+        user_id, moderator_id, reason, datetime.now(timezone.utc).isoformat(),
+        idempotent=True,
+    )
+
+
+async def remove_blacklist(user_id: int) -> bool:
+    """Returns whether the user was on the blacklist."""
+    removed = await _execute("DELETE FROM global_blacklist WHERE user_id = $1", user_id, idempotent=True)
+    return removed > 0
+
+
+async def get_blacklist_entry(user_id: int) -> asyncpg.Record | None:
+    return await _fetch_one(
+        "SELECT user_id, moderator_id, reason, created_at FROM global_blacklist WHERE user_id = $1",
+        user_id,
+    )
+
+
+async def list_blacklist() -> list[asyncpg.Record]:
+    return await _fetch_all(
+        "SELECT user_id, moderator_id, reason, created_at FROM global_blacklist ORDER BY created_at DESC"
+    )
+
+
 # --- Channel lock state -------------------------------------------------------
 
 async def save_channel_lock(guild_id: int, channel_id: int, role_states: dict[int, str]) -> None:
@@ -678,6 +732,11 @@ async def pop_channel_lock(guild_id: int, channel_id: int) -> dict[int, str] | N
         return None
 
 
+async def get_locked_channel_ids(guild_id: int) -> list[int]:
+    rows = await _fetch_all("SELECT channel_id FROM channel_locks WHERE guild_id = $1", guild_id)
+    return [row["channel_id"] for row in rows]
+
+
 # --- Health checks -----------------------------------------------------------
 
 async def check_connection() -> tuple[bool, str]:
@@ -703,3 +762,7 @@ async def get_total_case_count() -> int:
 
 async def get_active_temp_ban_count() -> int:
     return (await _fetch_val("SELECT COUNT(*) FROM temp_bans")) or 0
+
+
+async def get_blacklist_count() -> int:
+    return (await _fetch_val("SELECT COUNT(*) FROM global_blacklist")) or 0

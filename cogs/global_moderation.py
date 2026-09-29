@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from typing import Awaitable, Callable, Optional
 
@@ -5,16 +6,48 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cogs.channel_moderation import lock_channel, resolve_lockdown_roles, unlock_channel
 from config import APPROVED_GUILD_IDS, GLOBAL_ACTION_EXEMPT_GUILD_IDS
-from embeds import audit_reason, build_ban_dm_embed, build_dm_notice_embed, build_notice_embed, build_summary_embed
+from database import (
+    add_blacklist,
+    get_blacklist_entry,
+    get_guild_settings,
+    get_locked_channel_ids,
+    list_blacklist,
+    remove_blacklist,
+)
+from embeds import (
+    DANGER_COLOR,
+    MUTED_COLOR,
+    NEUTRAL_COLOR,
+    SUCCESS_COLOR,
+    audit_reason,
+    base_embed,
+    build_ban_dm_embed,
+    build_dm_notice_embed,
+    build_notice_embed,
+    build_summary_embed,
+    clamp,
+    format_timestamp,
+)
 from guards import from_approved_guild, has_tier, is_protected
-from modlog import record_case, try_dm
+from modlog import _resolve_channel, post_to_log_channel, record_case, try_dm
 from views import BanAppealView
 from views import ConfirmView, build_confirm_prompt
 
 MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap: 28 days
+BLACKLIST_PAGE_SIZE = 20
+
+logger = logging.getLogger("modbot.global_moderation")
 
 GuildAction = Callable[[discord.Guild, Optional[discord.Member]], Awaitable[None]]
+
+
+def is_global_target(guild: discord.Guild) -> bool:
+    """Whether global actions (and the blacklist) apply to this guild."""
+    if APPROVED_GUILD_IDS and guild.id not in APPROVED_GUILD_IDS:
+        return False
+    return guild.id not in GLOBAL_ACTION_EXEMPT_GUILD_IDS
 
 
 def target_guilds(bot: commands.Bot) -> list[discord.Guild]:
@@ -25,13 +58,7 @@ def target_guilds(bot: commands.Bot) -> list[discord.Guild]:
     actions so that (for example) a globally banned user can still access the
     Appeals server.
     """
-    if APPROVED_GUILD_IDS:
-        guilds = [g for g in bot.guilds if g.id in APPROVED_GUILD_IDS]
-    else:
-        guilds = list(bot.guilds)
-    if GLOBAL_ACTION_EXEMPT_GUILD_IDS:
-        guilds = [g for g in guilds if g.id not in GLOBAL_ACTION_EXEMPT_GUILD_IDS]
-    return guilds
+    return [guild for guild in bot.guilds if is_global_target(guild)]
 
 
 async def notify_user(user: discord.User, action_type: str, reason: str) -> None:
@@ -39,7 +66,7 @@ async def notify_user(user: discord.User, action_type: str, reason: str) -> None
 
 
 async def notify_global_ban(user: discord.User, reason: str) -> None:
-    """Send the professional NFPD ban DM with the appeal button for global bans."""
+    """Send the ban DM with the appeal button for global bans."""
     await try_dm(user, build_ban_dm_embed(reason, is_global=True), BanAppealView())
 
 
@@ -99,7 +126,7 @@ class GlobalModeration(commands.Cog):
     @commands.hybrid_command(name="globalkick", description="Kick a user from every server the bot shares with them")
     @app_commands.describe(user="The user to kick everywhere", reason="Why they're being kicked")
     @commands.guild_only()
-    @has_tier("management")
+    @has_tier("gov")
     @from_approved_guild()
     async def globalkick(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         if await refuse_protected(ctx, user):
@@ -120,7 +147,7 @@ class GlobalModeration(commands.Cog):
     @commands.hybrid_command(name="globalban", description="Ban a user from every server the bot is in")
     @app_commands.describe(user="The user to ban everywhere", reason="Why they're being banned")
     @commands.guild_only()
-    @has_tier("management")
+    @has_tier("gov")
     @from_approved_guild()
     async def globalban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         if await refuse_protected(ctx, user):
@@ -131,6 +158,8 @@ class GlobalModeration(commands.Cog):
 
         await notify_global_ban(user, reason)
         reason_text = audit_reason(ctx.author, "Global ban", reason)
+        # Blacklisted first, so a rejoin racing the bans below is still caught.
+        await add_blacklist(user.id, ctx.author.id, reason)
 
         await self.apply_everywhere(
             ctx, user, "global_ban", reason,
@@ -141,11 +170,12 @@ class GlobalModeration(commands.Cog):
     @commands.hybrid_command(name="globalunban", description="Unban a user from every server the bot is in")
     @app_commands.describe(user="The user to unban everywhere", reason="Why they're being unbanned")
     @commands.guild_only()
-    @has_tier("management")
+    @has_tier("gov")
     @from_approved_guild()
     async def globalunban(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         await ctx.defer()
         reason_text = audit_reason(ctx.author, "Global unban", reason)
+        await remove_blacklist(user.id)
 
         await self.apply_everywhere(
             ctx, user, "global_unban", reason,
@@ -160,7 +190,7 @@ class GlobalModeration(commands.Cog):
         reason="Why they're being muted",
     )
     @commands.guild_only()
-    @has_tier("management")
+    @has_tier("gov")
     @from_approved_guild()
     async def globalmute(
         self,
@@ -191,7 +221,7 @@ class GlobalModeration(commands.Cog):
     @commands.hybrid_command(name="globalunmute", description="Clear a user's timeout in every shared server")
     @app_commands.describe(user="The user to unmute everywhere", reason="Why they're being unmuted")
     @commands.guild_only()
-    @has_tier("management")
+    @has_tier("gov")
     @from_approved_guild()
     async def globalunmute(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
         await ctx.defer()
@@ -202,6 +232,261 @@ class GlobalModeration(commands.Cog):
             lambda guild, member: member.timeout(None, reason=reason_text),
             member_only=True,
         )
+
+    # --- Global blacklist -----------------------------------------------------
+
+    async def _ban_blacklisted(self, guild: discord.Guild, user_id: int, reason: str | None) -> None:
+        """Ban a blacklisted user who turned up in a guild covered by global actions."""
+        if is_protected(user_id) or self.bot.user is None:
+            return
+        case_reason = f"Global blacklist: {reason or 'No reason provided'}"
+        try:
+            # Bans are keyed by ID, so this works whether or not they're in the server.
+            await guild.ban(discord.Object(id=user_id), reason=clamp(case_reason, 512), delete_message_seconds=0)
+        except discord.HTTPException as error:
+            logger.warning("Could not ban blacklisted user %s in %s (%s): %s", user_id, guild.name, guild.id, error)
+            return
+
+        user = self.bot.get_user(user_id)
+        if user is None:
+            try:
+                user = await self.bot.fetch_user(user_id)
+            except discord.HTTPException:
+                return  # Ban is in place; only the case-log entry is lost.
+        await record_case(guild, user, self.bot.user, "global_ban", case_reason)
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member) -> None:
+        if member.bot or not is_global_target(member.guild):
+            return
+        try:
+            entry = await get_blacklist_entry(member.id)
+        except Exception:
+            logger.exception("Could not check the global blacklist for %s", member.id)
+            return
+        if entry is not None:
+            await self._ban_blacklisted(member.guild, member.id, entry["reason"])
+
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """Apply the whole blacklist to a newly joined server, so it starts out clean."""
+        if not is_global_target(guild):
+            return
+        try:
+            entries = await list_blacklist()
+        except Exception:
+            logger.exception("Could not load the global blacklist for new guild %s", guild.id)
+            return
+        for entry in entries:
+            await self._ban_blacklisted(guild, entry["user_id"], entry["reason"])
+
+    @commands.hybrid_group(
+        name="globalblacklist",
+        description="Manage users who are banned on sight in every server",
+        fallback="list",
+    )
+    @commands.guild_only()
+    @has_tier("gov")
+    @from_approved_guild()
+    async def globalblacklist(self, ctx: commands.Context, page: int = 1):
+        entries = await list_blacklist()
+        if not entries:
+            await ctx.send(embed=build_notice_embed("The global blacklist is empty."))
+            return
+
+        last_page = max(1, (len(entries) + BLACKLIST_PAGE_SIZE - 1) // BLACKLIST_PAGE_SIZE)
+        page = min(max(page, 1), last_page)
+        start = (page - 1) * BLACKLIST_PAGE_SIZE
+        lines = [
+            f"<@{row['user_id']}> `{row['user_id']}` - {clamp(row['reason'], 80, empty='No reason')} "
+            f"({format_timestamp(row['created_at'], 'R')})"
+            for row in entries[start : start + BLACKLIST_PAGE_SIZE]
+        ]
+        embed = base_embed("Global Blacklist", DANGER_COLOR, clamp("\n".join(lines), 4096))
+        embed.set_footer(text=f"Page {page} of {last_page}  \u2022  {len(entries)} total")
+        await ctx.send(embed=embed)
+
+    @globalblacklist.command(name="add", description="Blacklist a user and ban them wherever they are now")
+    @app_commands.describe(user="The user to blacklist", reason="Why they're being blacklisted")
+    @commands.guild_only()
+    @has_tier("gov")
+    @from_approved_guild()
+    async def globalblacklist_add(self, ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided"):
+        if await refuse_protected(ctx, user):
+            return
+        if not await request_confirmation(
+            ctx,
+            f"Blacklist **{user}**? They'll be banned from every server they're in now "
+            "and on sight if they join any other.",
+        ):
+            await ctx.send(embed=build_notice_embed("Blacklist cancelled.", success=False))
+            return
+
+        await add_blacklist(user.id, ctx.author.id, reason)
+        reason_text = audit_reason(ctx.author, "Global blacklist", reason)
+        await self.apply_everywhere(
+            ctx, user, "global_ban", f"Global blacklist: {reason}",
+            lambda guild, member: guild.ban(user, reason=reason_text, delete_message_seconds=0),
+            member_only=True,
+        )
+
+    @globalblacklist.command(name="remove", description="Take a user off the blacklist (does not unban them)")
+    @app_commands.describe(user="The user to remove from the blacklist")
+    @commands.guild_only()
+    @has_tier("gov")
+    @from_approved_guild()
+    async def globalblacklist_remove(self, ctx: commands.Context, user: discord.User):
+        if not await remove_blacklist(user.id):
+            await ctx.send(embed=build_notice_embed(f"**{user}** isn't on the global blacklist.", success=False))
+            return
+        await ctx.send(embed=build_notice_embed(
+            f"**{user}** is off the global blacklist. Existing bans stay - use `/globalunban` to lift them."
+        ))
+
+    @globalblacklist.command(name="check", description="See whether a user is blacklisted, and why")
+    @app_commands.describe(user="The user to look up")
+    @commands.guild_only()
+    @has_tier("gov")
+    @from_approved_guild()
+    async def globalblacklist_check(self, ctx: commands.Context, user: discord.User):
+        entry = await get_blacklist_entry(user.id)
+        if entry is None:
+            await ctx.send(embed=build_notice_embed(f"**{user}** is not blacklisted."))
+            return
+        embed = base_embed("Blacklisted", DANGER_COLOR, f"**{user}**\n`{user.id}`")
+        embed.add_field(name="Reason", value=clamp(entry["reason"]), inline=False)
+        embed.add_field(name="Added by", value=f"<@{entry['moderator_id']}>", inline=True)
+        embed.add_field(name="Added", value=format_timestamp(entry["created_at"], "R"), inline=True)
+        await ctx.send(embed=embed)
+
+    # --- Global announce and lockdown -------------------------------------------
+
+    @commands.hybrid_command(name="globalannounce", description="Post an announcement in every server")
+    @app_commands.describe(
+        message="The announcement text",
+        title="Optional heading for the announcement",
+    )
+    @commands.guild_only()
+    @has_tier("gov")
+    @from_approved_guild()
+    async def globalannounce(self, ctx: commands.Context, *, message: str, title: str = "Announcement"):
+        if not await request_confirmation(ctx, "Post this announcement in **every server**?\n\n" + clamp(message, 3500)):
+            await ctx.send(embed=build_notice_embed("Announcement cancelled.", success=False))
+            return
+
+        announcement = base_embed(clamp(title, 256), NEUTRAL_COLOR, clamp(message, 4096))
+        announcement.set_author(name=f"From {ctx.author}", icon_url=ctx.author.display_avatar.url)
+
+        posted, failed = [], []
+        for guild in target_guilds(self.bot):
+            settings = await get_guild_settings(guild.id)
+            channel_id = settings.get("announce_channel_id") or settings.get("log_channel_id")
+            channel = await _resolve_channel(guild, channel_id) if channel_id else None
+            if channel is None:
+                failed.append(f"{guild.name} (no channel set)")
+                continue
+            try:
+                await channel.send(embed=announcement)
+                posted.append(guild.name)
+            except discord.HTTPException:
+                failed.append(f"{guild.name} (can't post in #{getattr(channel, 'name', channel_id)})")
+
+        summary = base_embed("Global Announcement Sent", SUCCESS_COLOR if posted else DANGER_COLOR)
+        summary.add_field(
+            name=f"Posted in {len(posted)} server(s)",
+            value=clamp("\n".join(f"- {name}" for name in posted), empty="*None*"),
+            inline=False,
+        )
+        if failed:
+            summary.add_field(
+                name=f"Not posted ({len(failed)})",
+                value=clamp("\n".join(f"- {name}" for name in failed)),
+                inline=False,
+            )
+        await ctx.send(embed=summary)
+
+    @commands.hybrid_command(name="globallockdown", description="Lock every text channel in every server")
+    @app_commands.describe(reason="Why everything is being locked")
+    @commands.guild_only()
+    @has_tier("gov")
+    @from_approved_guild()
+    async def globallockdown(self, ctx: commands.Context, *, reason: str = "No reason provided"):
+        if not await request_confirmation(
+            ctx, "Lock **every text channel in every server**? `/globalunlock` restores them exactly."
+        ):
+            await ctx.send(embed=build_notice_embed("Global lockdown cancelled.", success=False))
+            return
+
+        audit = audit_reason(ctx.author, "Global lockdown", reason)
+        locked, failed = [], []
+        for guild in target_guilds(self.bot):
+            roles = await resolve_lockdown_roles(guild)
+            already_locked = set(await get_locked_channel_ids(guild.id))
+            channel_count, channel_failures = 0, 0
+            for channel in guild.text_channels:
+                # Re-locking would overwrite the saved state with "locked" and lose the original.
+                if channel.id in already_locked:
+                    continue
+                # Skip channels nobody in the lockdown roles can post in anyway (rules, logs...).
+                if not any(channel.permissions_for(role).send_messages for role in roles):
+                    continue
+                if not channel.permissions_for(guild.me).manage_roles:
+                    channel_failures += 1
+                    continue
+                if await lock_channel(channel, roles, audit):
+                    channel_failures += 1
+                channel_count += 1
+
+            if channel_count:
+                locked.append(f"{guild.name} ({channel_count} channel(s))")
+            if channel_failures:
+                failed.append(f"{guild.name} ({channel_failures} channel(s))")
+
+            log_embed = base_embed("Global Lockdown", MUTED_COLOR, f"{channel_count} channel(s) locked.")
+            log_embed.add_field(name="Reason", value=clamp(reason), inline=False)
+            log_embed.add_field(name="Locked by", value=f"{ctx.author} (`{ctx.author.id}`)", inline=True)
+            await post_to_log_channel(guild, log_embed)
+
+        summary = base_embed("Global Lockdown", MUTED_COLOR)
+        summary.add_field(name="Locked", value=clamp("\n".join(f"- {n}" for n in locked), empty="*Nothing to lock*"), inline=False)
+        if failed:
+            summary.add_field(name="Missing permissions in", value=clamp("\n".join(f"- {n}" for n in failed)), inline=False)
+        summary.add_field(name="Reason", value=clamp(reason), inline=False)
+        await ctx.send(embed=summary)
+
+    @commands.hybrid_command(name="globalunlock", description="Undo /globallockdown and every other channel lock")
+    @commands.guild_only()
+    @has_tier("gov")
+    @from_approved_guild()
+    async def globalunlock(self, ctx: commands.Context):
+        await ctx.defer()
+        unlocked, failed = [], []
+        for guild in target_guilds(self.bot):
+            channel_count, channel_failures = 0, 0
+            for channel_id in await get_locked_channel_ids(guild.id):
+                channel = guild.get_channel(channel_id)
+                if not isinstance(channel, discord.TextChannel):
+                    continue  # Deleted since; its record stays harmlessly.
+                result = await unlock_channel(channel)
+                if result is None:
+                    continue
+                channel_count += 1
+                if result[1]:
+                    channel_failures += 1
+
+            if channel_count:
+                unlocked.append(f"{guild.name} ({channel_count} channel(s))")
+                log_embed = base_embed("Global Unlock", SUCCESS_COLOR, f"{channel_count} channel(s) unlocked.")
+                log_embed.add_field(name="Unlocked by", value=f"{ctx.author} (`{ctx.author.id}`)", inline=True)
+                await post_to_log_channel(guild, log_embed)
+            if channel_failures:
+                failed.append(f"{guild.name} ({channel_failures} channel(s))")
+
+        summary = base_embed("Global Unlock", SUCCESS_COLOR)
+        summary.add_field(name="Unlocked", value=clamp("\n".join(f"- {n}" for n in unlocked), empty="*Nothing was locked*"), inline=False)
+        if failed:
+            summary.add_field(name="Couldn't fully restore", value=clamp("\n".join(f"- {n}" for n in failed)), inline=False)
+        await ctx.send(embed=summary)
 
 
 async def setup(bot: commands.Bot):

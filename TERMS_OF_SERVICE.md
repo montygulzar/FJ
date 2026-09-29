@@ -1,17 +1,17 @@
 # Terms of Service
 
-**Application:** NFPD Moderation
-**Operator:** ombdeveloping - OMB
-**Contact:** ombdeveloping | ID-1285998518213017663
+**Application:** FJUSA Mod Bot
+**Operator:** <your name>
+**Contact:** <your Discord username and ID>
 **Last updated:** 27/07/26
 
 By adding the Application to a Discord server, or by using its commands in a server where it is present, you agree to these terms. If you do not agree, do not use the Application.
 
 ## 1\. What the Application does
 
-The Application provides moderation tooling for Discord servers: warnings, timeouts (mutes), kicks, bans, temporary bans, message purging, channel locking, slowmode, a record of moderation actions, and alerts for newly created accounts joining.
+The Application provides moderation tooling for Discord servers: warnings, mutes and timeouts, kicks, bans, temporary bans, message purging, channel locking, slowmode, a record of moderation actions, and alerts for newly created accounts joining.
 
-It also provides "global" actions, which apply a moderation action across every server the Application is present in simultaneously. These are restricted to the Application's operators and to holders of a designated role.
+It also provides "global" actions, which apply a moderation action, announcement or channel lockdown across every server the Application is present in simultaneously, and a global blacklist whose members are banned on joining any of those servers. These are restricted to the Application's operators and to holders of a designated role.
 
 ## 2\. Eligibility
 
@@ -67,7 +67,7 @@ Nothing in these terms excludes or limits liability where it would be unlawful t
 
 ## 10\. Reporting problems
 
-To report a bug, a violation of these terms, or misuse of the Application, contact us at ombdeveloping, ID-1285998518213017663. We review reports and will take action where appropriate.
+To report a bug, a violation of these terms, or misuse of the Application, contact us at the operator, ID-1285998518213017663. We review reports and will take action where appropriate.
 
 ## 11\. Changes
 

@@ -23,23 +23,73 @@ TRISTATE_TO_TEXT = {True: "true", False: "false", None: "none"}
 TEXT_TO_TRISTATE = {"true": True, "false": False, "none": None}
 
 
+async def resolve_lockdown_roles(guild: discord.Guild) -> list[discord.Role]:
+    """All roles that /lockdown silences. Falls back to [@everyone] if none are configured."""
+    role_ids = await get_lockdown_role_ids(guild.id)
+    if not role_ids:
+        return [guild.default_role]
+
+    roles = []
+    for role_id in role_ids:
+        role = guild.get_role(role_id)
+        if role is not None:
+            roles.append(role)
+
+    return roles or [guild.default_role]
+
+
+async def lock_channel(
+    channel: discord.TextChannel, roles: list[discord.Role], reason: str
+) -> list[discord.Role]:
+    """Deny send_messages for each role, saving the previous state first. Returns roles that failed."""
+    # Snapshot each role's current send_messages state before changing anything.
+    role_states: dict[int, str] = {}
+    for role in roles:
+        overwrite = channel.overwrites_for(role)
+        role_states[role.id] = TRISTATE_TO_TEXT[overwrite.send_messages]
+
+    await save_channel_lock(channel.guild.id, channel.id, role_states)
+
+    failed_roles = []
+    for role in roles:
+        overwrite = channel.overwrites_for(role)
+        overwrite.send_messages = False
+        try:
+            await channel.set_permissions(role, overwrite=overwrite, reason=clamp(reason, 512))
+        except discord.HTTPException:
+            failed_roles.append(role)
+    return failed_roles
+
+
+async def unlock_channel(
+    channel: discord.TextChannel,
+) -> tuple[list[discord.Role], list[discord.Role]] | None:
+    """Restore the send_messages state saved by lock_channel.
+
+    Returns (restored_roles, failed_roles), or None when no lock was recorded.
+    """
+    saved = await pop_channel_lock(channel.guild.id, channel.id)
+    if saved is None:
+        return None
+
+    restored_roles, failed_roles = [], []
+    for role_id, state_str in saved.items():
+        role = channel.guild.get_role(role_id)
+        if role is None:
+            continue  # Role was deleted since the lockdown - nothing to restore.
+        overwrite = channel.overwrites_for(role)
+        overwrite.send_messages = TEXT_TO_TRISTATE.get(state_str)
+        try:
+            await channel.set_permissions(role, overwrite=overwrite)
+            restored_roles.append(role)
+        except discord.HTTPException:
+            failed_roles.append(role)
+    return restored_roles, failed_roles
+
+
 class ChannelModeration(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-
-    async def resolve_lockdown_roles(self, guild: discord.Guild) -> list[discord.Role]:
-        """All roles that /lockdown silences. Falls back to [@everyone] if none are configured."""
-        role_ids = await get_lockdown_role_ids(guild.id)
-        if not role_ids:
-            return [guild.default_role]
-
-        roles = []
-        for role_id in role_ids:
-            role = guild.get_role(role_id)
-            if role is not None:
-                roles.append(role)
-
-        return roles or [guild.default_role]
 
     @commands.hybrid_command(name="slowmode", description="Set a channel's slowmode delay")
     @app_commands.describe(
@@ -47,7 +97,7 @@ class ChannelModeration(commands.Cog):
         channel="Channel to apply to, defaults to the current one",
     )
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("staff")
     @commands.bot_has_permissions(manage_channels=True)
     async def slowmode(
         self,
@@ -70,7 +120,7 @@ class ChannelModeration(commands.Cog):
         member="Only delete messages from this member",
     )
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("staff")
     @commands.bot_has_permissions(manage_messages=True, read_message_history=True)
     async def purge(
         self,
@@ -115,7 +165,7 @@ class ChannelModeration(commands.Cog):
         reason="Why the channel is being locked",
     )
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("staff_director")
     @commands.bot_has_permissions(manage_channels=True)
     async def lockdown(
         self,
@@ -125,24 +175,8 @@ class ChannelModeration(commands.Cog):
         reason: str = "No reason provided",
     ):
         target = channel or ctx.channel
-        locked_roles = await self.resolve_lockdown_roles(ctx.guild)
-
-        # Snapshot each role's current send_messages state before changing anything.
-        role_states: dict[int, str] = {}
-        for role in locked_roles:
-            overwrite = target.overwrites_for(role)
-            role_states[role.id] = TRISTATE_TO_TEXT[overwrite.send_messages]
-
-        await save_channel_lock(ctx.guild.id, target.id, role_states)
-
-        failed_roles = []
-        for role in locked_roles:
-            overwrite = target.overwrites_for(role)
-            overwrite.send_messages = False
-            try:
-                await target.set_permissions(role, overwrite=overwrite, reason=clamp(reason, 512))
-            except discord.HTTPException:
-                failed_roles.append(role.mention)
+        locked_roles = await resolve_lockdown_roles(ctx.guild)
+        failed_roles = [role.mention for role in await lock_channel(target, locked_roles, reason)]
 
         role_list = ", ".join(r.mention for r in locked_roles)
         description = f"{role_list} can no longer post in {target.mention}."
@@ -158,15 +192,15 @@ class ChannelModeration(commands.Cog):
     @commands.hybrid_command(name="unlock", description="Restore configured roles' ability to send messages")
     @app_commands.describe(channel="Channel to unlock, defaults to the current one")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("staff_director")
     @commands.bot_has_permissions(manage_channels=True)
     async def unlock(self, ctx: commands.Context, channel: Optional[discord.TextChannel] = None):
         target = channel or ctx.channel
-        saved = await pop_channel_lock(ctx.guild.id, target.id)
+        result = await unlock_channel(target)
 
-        if saved is None:
+        if result is None:
             # No lock record - fall back to restoring the current lockdown roles to the default.
-            locked_roles = await self.resolve_lockdown_roles(ctx.guild)
+            locked_roles = await resolve_lockdown_roles(ctx.guild)
             for role in locked_roles:
                 overwrite = target.overwrites_for(role)
                 overwrite.send_messages = None
@@ -185,24 +219,12 @@ class ChannelModeration(commands.Cog):
             await post_to_log_channel(ctx.guild, embed)
             return
 
-        restored_roles, failed_roles = [], []
-        for role_id, state_str in saved.items():
-            role = ctx.guild.get_role(role_id)
-            if role is None:
-                continue  # Role was deleted since the lockdown - nothing to restore.
-            overwrite = target.overwrites_for(role)
-            overwrite.send_messages = TEXT_TO_TRISTATE.get(state_str)
-            try:
-                await target.set_permissions(role, overwrite=overwrite)
-                restored_roles.append(role.mention)
-            except discord.HTTPException:
-                failed_roles.append(role.mention)
-
+        restored_roles, failed_roles = result
         description = f"{target.mention} is unlocked."
         if restored_roles:
-            description += f"\nRestored: {', '.join(restored_roles)}"
+            description += f"\nRestored: {', '.join(r.mention for r in restored_roles)}"
         if failed_roles:
-            description += f"\nFailed to restore: {', '.join(failed_roles)}"
+            description += f"\nFailed to restore: {', '.join(r.mention for r in failed_roles)}"
 
         embed = base_embed("Channel Unlocked", SUCCESS_COLOR, description)
         embed.add_field(name="Unlocked by", value=ctx.author.mention, inline=True)
@@ -212,7 +234,7 @@ class ChannelModeration(commands.Cog):
     @commands.hybrid_command(name="addlockdownrole", description="Add a role to the lockdown list")
     @app_commands.describe(role="The role that will be silenced during lockdowns")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("staff_director")
     async def addlockdownrole(self, ctx: commands.Context, role: discord.Role):
         await add_lockdown_role(ctx.guild.id, role.id)
         current_ids = await get_lockdown_role_ids(ctx.guild.id)
@@ -225,7 +247,7 @@ class ChannelModeration(commands.Cog):
     @commands.hybrid_command(name="removelockdownrole", description="Remove a role from the lockdown list")
     @app_commands.describe(role="The role to remove from the lockdown list")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("staff_director")
     async def removelockdownrole(self, ctx: commands.Context, role: discord.Role):
         removed = await remove_lockdown_role(ctx.guild.id, role.id)
         if not removed:
@@ -240,7 +262,7 @@ class ChannelModeration(commands.Cog):
 
     @commands.hybrid_command(name="clearlockdownroles", description="Clear all lockdown roles (resets to @everyone)")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("staff_director")
     async def clearlockdownroles(self, ctx: commands.Context):
         await clear_lockdown_roles(ctx.guild.id)
         await ctx.send(embed=build_notice_embed("All lockdown roles cleared. /lockdown now silences @everyone."))

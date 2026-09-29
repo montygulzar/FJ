@@ -1,19 +1,19 @@
 # Deployment
 
-Self-hosted on Ubuntu with Docker. PostgreSQL runs as a separate, pre-existing
-container (`nfpd-postgres`); nothing here creates, migrates away from, or deletes
-it. `docker-compose.yml` deliberately defines only the bot service, so no compose
+Self-hosted on Linux with Docker. PostgreSQL runs as a separate container
+(`fjusa-postgres`); nothing in `docker-compose.yml` creates, migrates away from, or
+deletes it. `docker-compose.yml` deliberately defines only the bot service, so no compose
 command can touch the database container or its volume.
 
 ## Architecture
 
 ```
-docker network: nodey-monitoring
-├── nfpd-mod-bot    this repo, built from Dockerfile
-└── nfpd-postgres   PostgreSQL 16, managed separately
+docker network: fjusa-net
+├── fjusa-mod-bot    this repo, built from Dockerfile
+└── fjusa-postgres   PostgreSQL 16, managed separately
 ```
 
-The bot reaches the database at the hostname `nfpd-postgres` — containers on the
+The bot reaches the database at the hostname `fjusa-postgres` — containers on the
 same user-defined Docker network resolve each other by container name. Do not use
 `localhost` in `DATABASE_URL`: inside the bot container that points at the bot.
 
@@ -22,27 +22,37 @@ same user-defined Docker network resolve each other by container name. Do not us
 1. **Clone and configure**
 
    ```bash
-   git clone https://github.com/ombdeveloping/NFPD-Mod-Bot.git
-   cd NFPD-Mod-Bot
+   git clone https://github.com/montygulzar/FJ.git
+   cd FJ
    cp .env.example .env
    nano .env          # set BOT_TOKEN, DATABASE_URL, OWNER_IDS, ...
    chmod 600 .env     # the file holds the bot token and database password
    ```
 
-2. **Confirm the network exists**
+2. **Create the network** (once)
 
    ```bash
-   docker network ls | grep nodey-monitoring \
-     || docker network create nodey-monitoring
+   docker network ls | grep fjusa-net || docker network create fjusa-net
    ```
 
-3. **Confirm the database container is on that network**
+   Already have a network your other containers use? Put its name in `.env` as
+   `DOCKER_NETWORK=` and use it below instead.
+
+3. **Create the database container** (once — skip if you already run Postgres on
+   that network, and point `DATABASE_URL` at it instead)
 
    ```bash
-   docker network inspect nodey-monitoring --format '{{range .Containers}}{{.Name}} {{end}}'
-   # if nfpd-postgres is missing:
-   docker network connect nodey-monitoring nfpd-postgres
+   docker run -d --name fjusa-postgres --restart unless-stopped \
+     --network fjusa-net \
+     -e POSTGRES_USER=fjusa_bot \
+     -e POSTGRES_PASSWORD='pick-a-strong-password' \
+     -e POSTGRES_DB=fjusa \
+     -v fjusa-pgdata:/var/lib/postgresql/data \
+     postgres:16
    ```
+
+   Then in `.env`:
+   `DATABASE_URL=postgresql://fjusa_bot:pick-a-strong-password@fjusa-postgres:5432/fjusa`
 
 4. **Build and start**
 
@@ -59,7 +69,7 @@ same user-defined Docker network resolve each other by container name. Do not us
 ## Routine deployment
 
 ```bash
-cd ~/NFPD-Mod-Bot
+cd ~/FJ
 git pull
 docker compose build --build-arg GIT_COMMIT="$(git rev-parse --short HEAD)"
 docker compose up -d
@@ -83,7 +93,7 @@ docker compose logs --tail=30
 The health port is not published to the host, so probe it from the network:
 
 ```bash
-docker run --rm --network nodey-monitoring curlimages/curl -s http://nfpd-mod-bot:8080/ready
+docker run --rm --network fjusa-net curlimages/curl -s http://fjusa-mod-bot:8080/ready
 ```
 
 In Discord: `/health` for a quick summary, `/debug` for the full report.
@@ -91,12 +101,12 @@ In Discord: `/health` for a quick summary, `/debug` for the full report.
 Expected healthy startup log:
 
 ```
-Starting NFPD moderation bot (version=1.0.0 commit=abc1234)
+Starting FJUSA moderation bot (version=1.0.0 commit=abc1234)
 Health server listening on 0.0.0.0:8080
-Database ready at postgresql://***@nfpd-postgres:5432/nfpd (pool 1-10, 1 attempt(s), 0.1s)
+Database ready at postgresql://***@fjusa-postgres:5432/fjusa (pool 1-10, 1 attempt(s), 0.1s)
 Loaded 13/13 extensions
 Synced 37 slash command(s)
-Connected as NFPD Moderation (…) across N guild(s)
+Connected as FJUSA Mod Bot (…) across N guild(s)
 ```
 
 ## Endpoints
@@ -113,8 +123,10 @@ dependency outage, and the bot reconnects on its own.
 ## Global action exemptions
 
 `GLOBAL_ACTION_EXEMPT_GUILD_IDS` accepts a comma-separated list of Discord guild
-(server) IDs. Exempt guilds are **skipped** by every global moderation command:
-`globalban`, `globalunban`, `globalkick`, `globalmute`, `globalunmute`.
+(server) IDs. Exempt guilds are **skipped** by every global command:
+`globalban`, `globalunban`, `globalkick`, `globalmute`, `globalunmute`,
+`globalblacklist` (including auto-bans on join), `globalannounce`,
+`globallockdown` and `globalunlock`.
 
 Use this for an **Appeals server**: a globally banned user must still be able to
 remain in or join the Appeals server so they can appeal their punishment.
@@ -145,7 +157,7 @@ restart never duplicates a case or loses saved channel-lock state.
 log naming the problem, rather than retrying forever and hiding it.
 
 **Host reboots.** `restart: unless-stopped` starts the container with the Docker
-daemon. Ordering against `nfpd-postgres` does not matter, because of the retry
+daemon. Ordering against `fjusa-postgres` does not matter, because of the retry
 behaviour above.
 
 **`docker stop` / reboot shutdown.** `tini` forwards SIGTERM, which triggers an
@@ -173,8 +185,8 @@ The bot never deletes the database, but nothing here backs it up either. Dump th
 volume on a schedule:
 
 ```bash
-docker exec nfpd-postgres pg_dump -U nfpd_bot -d nfpd \
-  | gzip > "nfpd-$(date +%F).sql.gz"
+docker exec fjusa-postgres pg_dump -U fjusa_bot -d fjusa \
+  | gzip > "fjusa-$(date +%F).sql.gz"
 ```
 
 Restore into a **new** database first and verify before touching the live one.
@@ -195,9 +207,9 @@ build runs against a newer database. It simply ignores columns it does not know.
 | Symptom | Cause and fix |
 |---|---|
 | `Configuration error - the bot cannot start` (exit 2) | Every problem found is listed. Fix `.env`, then `docker compose up -d --force-recreate`. |
-| `Database not reachable ... retrying` repeating | Postgres is down, or not on `nodey-monitoring`. Check `docker ps` and `docker network inspect nodey-monitoring`. |
+| `Database not reachable ... retrying` repeating | Postgres is down, or not on `fjusa-net`. Check `docker ps` and `docker network inspect fjusa-net`. |
 | `password authentication failed` | Wrong credentials in `DATABASE_URL`. Note that a password with `@ / : #` must be percent-encoded — or use the `POSTGRES_*` variables, which encode it for you. |
-| `database "nfpd" does not exist` | Create it: `docker exec -it nfpd-postgres createdb -U nfpd_bot nfpd`. |
+| `database "fjusa" does not exist` | Create it: `docker exec -it fjusa-postgres createdb -U fjusa_bot fjusa`. |
 | `Discord rejected BOT_TOKEN` | Regenerate the token in the Discord developer portal and update `.env`. |
 | `Privileged intents are not enabled` | Enable Server Members and Message Content in the developer portal. |
 | Slash commands missing | Sync is rate-limited; it retries on the next restart. Prefix commands keep working. |

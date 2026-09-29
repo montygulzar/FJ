@@ -36,7 +36,7 @@ class Owner(commands.Cog):
         self.bot = bot
 
     @commands.hybrid_command(name="servers", description="List every server this bot is in, with invites")
-    @has_tier("development")
+    @has_tier("dev")
     async def servers(self, ctx: commands.Context):
         await ctx.defer()
 
@@ -80,7 +80,7 @@ class Owner(commands.Cog):
     @commands.hybrid_command(name="addrole", description="Add a role to a member")
     @app_commands.describe(member="The member to give the role to", role="The role to add", reason="Why")
     @commands.guild_only()
-    @has_tier("development")
+    @has_tier("dev")
     @commands.bot_has_permissions(manage_roles=True)
     async def addrole(
         self,

@@ -5,6 +5,7 @@ from discord.ext import commands
 from database import (
     get_guild_settings,
     get_lockdown_role_ids,
+    set_announce_channel,
     set_log_channel,
     set_raid_protection,
     set_server_log_channel,
@@ -34,7 +35,7 @@ class Settings(commands.Cog):
 
     @commands.hybrid_command(name="settings", description="Show this server's moderation configuration")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("gov")
     async def settings(self, ctx: commands.Context):
         config = await get_guild_settings(ctx.guild.id)
         lockdown_role_ids = await get_lockdown_role_ids(ctx.guild.id)
@@ -47,6 +48,11 @@ class Settings(commands.Cog):
             server_log_display = await _channel_display(ctx.guild, server_log_id)
         else:
             server_log_display = f"{mod_log_display} *(same as mod-log)*"
+        announce_id = config.get("announce_channel_id")
+        if announce_id:
+            announce_display = await _channel_display(ctx.guild, announce_id)
+        else:
+            announce_display = f"{mod_log_display} *(same as mod-log)*"
 
         lockdown_roles = [ctx.guild.get_role(r) for r in lockdown_role_ids if ctx.guild.get_role(r)]
         lockdown_value = (
@@ -58,7 +64,7 @@ class Settings(commands.Cog):
         embed = base_embed(f"Settings  \u2022  {ctx.guild.name}", NEUTRAL_COLOR)
         embed.add_field(name="Mod-log channel", value=mod_log_display, inline=True)
         embed.add_field(name="Server-log channel", value=server_log_display, inline=True)
-        embed.add_field(name="\u200b", value="\u200b", inline=True)  # spacer to keep grid tidy
+        embed.add_field(name="Announcement channel", value=announce_display, inline=True)
         embed.add_field(name="Lockdown roles", value=lockdown_value, inline=False)
         embed.add_field(
             name="Raid protection",
@@ -79,7 +85,7 @@ class Settings(commands.Cog):
     @commands.hybrid_command(name="setlogchannel", description="Set where moderation cases are logged")
     @app_commands.describe(channel="Channel for ban/kick/warn/mute case logs")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("gov")
     async def setlogchannel(self, ctx: commands.Context, channel: discord.TextChannel):
         await set_log_channel(ctx.guild.id, channel.id)
         ok, detail = await check_log_channel(ctx.guild)
@@ -94,7 +100,7 @@ class Settings(commands.Cog):
     )
     @app_commands.describe(channel="Channel for server event logs, or leave blank to use the mod-log channel")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("gov")
     async def setserverlogchannel(
         self,
         ctx: commands.Context,
@@ -111,9 +117,29 @@ class Settings(commands.Cog):
             message += f"\n\u26A0 {detail}"
         await ctx.send(embed=build_notice_embed(message, success=ok))
 
+    @commands.hybrid_command(
+        name="setannouncechannel",
+        description="Set where /globalannounce posts in this server",
+    )
+    @app_commands.describe(channel="Channel for global announcements, or leave blank to use the mod-log channel")
+    @commands.guild_only()
+    @has_tier("gov")
+    async def setannouncechannel(
+        self,
+        ctx: commands.Context,
+        channel: discord.TextChannel | None = None,
+    ):
+        await set_announce_channel(ctx.guild.id, channel.id if channel else None)
+        if channel is None:
+            await ctx.send(embed=build_notice_embed(
+                "Announcement channel cleared. Global announcements will post to the mod-log channel."
+            ))
+            return
+        await ctx.send(embed=build_notice_embed(f"Global announcements will post in {channel.mention}."))
+
     @commands.hybrid_command(name="testlog", description="Send a test message to the configured mod-log channel")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("gov")
     async def testlog(self, ctx: commands.Context):
         ok, detail = await check_log_channel(ctx.guild)
         if not ok:
@@ -136,7 +162,7 @@ class Settings(commands.Cog):
 
     @commands.hybrid_command(name="testserverlog", description="Send a test message to the server-log channel")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("gov")
     async def testserverlog(self, ctx: commands.Context):
         ok, detail = await check_server_log_channel(ctx.guild)
         if not ok:
@@ -164,7 +190,7 @@ class Settings(commands.Cog):
     )
     @app_commands.describe(minimum_account_age_hours="Minimum account age in hours, or 0 to disable")
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("gov")
     async def setraidprotection(self, ctx: commands.Context, minimum_account_age_hours: int):
         if minimum_account_age_hours < 0:
             await ctx.send(embed=build_notice_embed("Minimum account age can't be negative.", success=False))
@@ -192,7 +218,7 @@ class Settings(commands.Cog):
         ban_at="Warn count that triggers an automatic ban (0 to disable)",
     )
     @commands.guild_only()
-    @has_tier("ownership")
+    @has_tier("gov")
     async def setwarnthresholds(
         self,
         ctx: commands.Context,

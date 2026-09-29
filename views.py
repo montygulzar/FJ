@@ -1,8 +1,8 @@
 import discord
 
 import embeds as embeds_module
-from config import BRAND_NAME
-from embeds import DANGER_COLOR, NEUTRAL_COLOR, NFPD_APPEAL_URL, build_case_line
+from config import APPEAL_URL, BRAND_NAME
+from embeds import DANGER_COLOR, NEUTRAL_COLOR, build_case_line
 
 
 class BanAppealView(discord.ui.View):
@@ -11,11 +11,13 @@ class BanAppealView(discord.ui.View):
     def __init__(self) -> None:
         # timeout=None means the button stays active indefinitely in the DM.
         super().__init__(timeout=None)
+        if not APPEAL_URL:
+            return  # No appeals server configured - send the DM without a button.
         self.add_item(
             discord.ui.Button(
                 label="Appeal your ban",
                 style=discord.ButtonStyle.link,
-                url=NFPD_APPEAL_URL,
+                url=APPEAL_URL,
                 emoji="📝",
             )
         )

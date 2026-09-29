@@ -1,7 +1,7 @@
-# NFPD moderation bot.
+# FJUSA moderation bot.
 #
-# PostgreSQL is NOT defined here: it runs as the pre-existing `nfpd-postgres`
-# container. This file only builds and runs the bot and joins it to the same
+# PostgreSQL is NOT defined here: it runs as a separate `fjusa-postgres`
+# container (see DEPLOYMENT.md). This file only builds and runs the bot and joins it to the same
 # network, so `docker compose up` can never touch the database container or its
 # volume.
 
@@ -15,8 +15,8 @@ services:
         #   GIT_COMMIT=$(git rev-parse --short HEAD) docker compose build
         APP_VERSION: ${APP_VERSION:-1.0.0}
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
-    image: nfpd-mod-bot:latest
-    container_name: nfpd-mod-bot
+    image: fjusa-mod-bot:latest
+    container_name: fjusa-mod-bot
     restart: unless-stopped
 
     # All secrets and configuration come from .env - nothing is baked into the image.
@@ -24,7 +24,7 @@ services:
       - .env
 
     networks:
-      - nodey-monitoring
+      - botnet
 
     # Must exceed DB_CLOSE_TIMEOUT plus the Discord close timeout so the shutdown
     # path finishes before Docker escalates to SIGKILL.
@@ -48,7 +48,9 @@ services:
       - no-new-privileges:true
 
 networks:
-  # Created outside this file and shared with nfpd-postgres. `external: true`
-  # means compose attaches to it and never creates or removes it.
-  nodey-monitoring:
+  # Created outside this file and shared with fjusa-postgres. `external: true`
+  # means compose attaches to it and never creates or removes it. Set
+  # DOCKER_NETWORK in .env to use an existing network with a different name.
+  botnet:
+    name: ${DOCKER_NETWORK:-fjusa-net}
     external: true

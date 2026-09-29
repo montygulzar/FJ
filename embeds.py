@@ -3,7 +3,7 @@ from typing import NamedTuple
 
 import discord
 
-from config import BRAND_NAME
+from config import APPEAL_URL, BRAND_NAME, SERVER_DISPLAY_NAME
 
 
 class ActionStyle(NamedTuple):
@@ -21,6 +21,7 @@ MUTED_COLOR = 0x4F545C
 ACTION_STYLES = {
     "warn":          ActionStyle(0xF5A524, "\u26A0",     "Warning",       "You were warned in {location}."),
     "mute":          ActionStyle(0xE8833A, "\U0001F507", "Mute",          "You were muted in {location}."),
+    "tempmute":      ActionStyle(0xE8833A, "\u23F2",     "Temp Mute",     "You were temporarily muted in {location}."),
     "unmute":        ActionStyle(SUCCESS_COLOR, "\U0001F508", "Unmute",   ""),
     "kick":          ActionStyle(0xE85D3A, "\U0001F6AA", "Kick",          "You were kicked from {location}."),
     "ban":           ActionStyle(DANGER_COLOR, "\U0001F6D1", "Ban",       "You were banned from {location}."),
@@ -161,21 +162,18 @@ def build_case_line(row, guild: discord.Guild) -> tuple[str, str]:
 
 
 
-NFPD_APPEAL_URL = "https://discord.gg/xnKvzXw5Vd"
-
-
 def build_ban_dm_embed(
     reason: str,
     *,
     is_global: bool = False,
     unban_at: str | None = None,
 ) -> discord.Embed:
-    """A professional ban DM specific to NFPD, with optional expiry field for temp-bans.
+    """A professional ban DM, with optional expiry field for temp-bans.
 
     Separate from build_dm_notice_embed so the appeal link and branding can be
     applied consistently without complicating the generic notice path.
     """
-    scope = "all NFPD servers" if is_global else "North Florida City Police Department"
+    scope = f"all {SERVER_DISPLAY_NAME} servers" if is_global else SERVER_DISPLAY_NAME
     embed = discord.Embed(
         title="🛑  You have been banned",
         description=f"You have been banned from **{scope}**.",
@@ -187,16 +185,18 @@ def build_ban_dm_embed(
         embed.add_field(name="Ban expires", value=unban_at, inline=False)
     else:
         embed.add_field(name="Duration", value="Permanent", inline=False)
-    embed.add_field(
-        name="Appeals",
-        value=(
-            "If you believe this ban was issued in error, you may appeal by joining the "
-            f"[NFPD Appeals server]({NFPD_APPEAL_URL})."
-        ),
-        inline=False,
-    )
-    embed.set_footer(text="North Florida City Police Department", icon_url=BRAND_ICON_URL)
+    if APPEAL_URL:
+        embed.add_field(
+            name="Appeals",
+            value=(
+                "If you believe this ban was issued in error, you may appeal by joining the "
+                f"[{SERVER_DISPLAY_NAME} Appeals server]({APPEAL_URL})."
+            ),
+            inline=False,
+        )
+    embed.set_footer(text=BRAND_NAME, icon_url=BRAND_ICON_URL)
     return embed
+
 
 def build_notice_embed(message: str, *, success: bool = True) -> discord.Embed:
     return discord.Embed(

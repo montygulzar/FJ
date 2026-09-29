@@ -3,16 +3,14 @@ import logging
 import discord
 from discord.ext import commands
 
-from config import APPROVED_GUILD_IDS, LEAVE_UNAPPROVED_GUILDS, OWNER_IDS
+from config import APPROVED_GUILD_IDS, DEVELOPER_CONTACT, LEAVE_UNAPPROVED_GUILDS, OWNER_IDS, SERVER_DISPLAY_NAME
 
 logger = logging.getLogger("modbot.guild_guard")
 
 UNAPPROVED_SERVER_MESSAGE = (
-    "This server is not an approved NFPD server.\n"
-    "If you believe this is a mistake, please DM the developer.\n\n"
-    "**Developer:** omb\n"
-    "**Username:** ombdeveloping\n"
-    "**Discord ID:** `1285998518213017663`"
+    f"This server is not an approved {SERVER_DISPLAY_NAME} server.\n"
+    "If you believe this is a mistake, please DM the developer."
+    + (f"\n\n**Developer:** {DEVELOPER_CONTACT}" if DEVELOPER_CONTACT else "")
 )
 
 
