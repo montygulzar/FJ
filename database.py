@@ -127,6 +127,25 @@ SCHEMA_STATEMENTS = (
         PRIMARY KEY (guild_id, channel_id)
     )
     """,
+    # Ban appeals submitted from tempban DMs. One open appeal per user per guild is
+    # enforced by the partial unique index below, not just by the application.
+    """
+    CREATE TABLE IF NOT EXISTS appeals (
+        id             SERIAL PRIMARY KEY,
+        guild_id       BIGINT NOT NULL,
+        user_id        BIGINT NOT NULL,
+        answer         TEXT NOT NULL,
+        extra          TEXT,
+        status         TEXT NOT NULL DEFAULT 'pending',
+        created_at     TEXT NOT NULL,
+        decided_by     BIGINT,
+        decided_at     TEXT,
+        decision_note  TEXT,
+        message_id     BIGINT
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_appeals_one_open ON appeals (guild_id, user_id) WHERE status = 'pending'",
+    "CREATE INDEX IF NOT EXISTS idx_appeals_guild_user ON appeals (guild_id, user_id)",
     # Users banned everywhere, including servers the bot joins later: the join
     # listener in cogs/global_moderation.py bans anyone listed here on arrival.
     """
@@ -660,6 +679,102 @@ async def get_expired_temp_bans(now: datetime) -> list[asyncpg.Record]:
         "SELECT guild_id, user_id FROM temp_bans WHERE unban_at <= $1",
         now.isoformat(),
     )
+
+
+# --- Appeals ------------------------------------------------------------------
+
+async def create_appeal(guild_id: int, user_id: int, answer: str, extra: str | None) -> int | None:
+    """Open an appeal and return its ID, or None if one is already pending for this ban."""
+    return await _run(
+        lambda conn: conn.fetchval(
+            """
+            INSERT INTO appeals (guild_id, user_id, answer, extra, created_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (guild_id, user_id) WHERE status = 'pending' DO NOTHING
+            RETURNING id
+            """,
+            guild_id, user_id, answer, extra, datetime.now(timezone.utc).isoformat(),
+        ),
+        idempotent=False,
+    )
+
+
+async def delete_appeal(appeal_id: int) -> None:
+    """Remove an appeal that never reached staff, so it doesn't block a retry."""
+    await _execute("DELETE FROM appeals WHERE id = $1", appeal_id, idempotent=True)
+
+
+async def set_appeal_message(appeal_id: int, message_id: int) -> None:
+    await _execute("UPDATE appeals SET message_id = $2 WHERE id = $1", appeal_id, message_id, idempotent=True)
+
+
+async def get_appeal(appeal_id: int) -> asyncpg.Record | None:
+    return await _fetch_one("SELECT * FROM appeals WHERE id = $1", appeal_id)
+
+
+async def get_open_appeal(guild_id: int, user_id: int) -> asyncpg.Record | None:
+    return await _fetch_one(
+        "SELECT * FROM appeals WHERE guild_id = $1 AND user_id = $2 AND status = 'pending'",
+        guild_id, user_id,
+    )
+
+
+async def get_last_denied_appeal(guild_id: int, user_id: int) -> asyncpg.Record | None:
+    return await _fetch_one(
+        """
+        SELECT * FROM appeals
+        WHERE guild_id = $1 AND user_id = $2 AND status = 'denied'
+        ORDER BY id DESC LIMIT 1
+        """,
+        guild_id, user_id,
+    )
+
+
+async def count_appeals(guild_id: int, user_id: int) -> int:
+    return (
+        await _fetch_val("SELECT COUNT(*) FROM appeals WHERE guild_id = $1 AND user_id = $2", guild_id, user_id)
+    ) or 0
+
+
+async def decide_appeal(appeal_id: int, status: str, moderator_id: int, note: str | None) -> bool:
+    """Close a pending appeal. False if it was already decided, so two staff can't both act on it."""
+    if status not in {"accepted", "denied"}:
+        raise ValueError(f"Invalid appeal status {status!r}")
+    updated = await _execute(
+        """
+        UPDATE appeals
+        SET status = $2, decided_by = $3, decided_at = $4, decision_note = $5
+        WHERE id = $1 AND status = 'pending'
+        """,
+        appeal_id, status, moderator_id, datetime.now(timezone.utc).isoformat(), note,
+        idempotent=False,
+    )
+    return updated == 1
+
+
+async def get_latest_ban_case(guild_id: int, user_id: int) -> asyncpg.Record | None:
+    return await _fetch_one(
+        """
+        SELECT * FROM cases
+        WHERE guild_id = $1 AND user_id = $2 AND action_type IN ('ban', 'tempban', 'global_ban')
+        ORDER BY id DESC LIMIT 1
+        """,
+        guild_id, user_id,
+    )
+
+
+async def get_temp_ban(guild_id: int, user_id: int) -> asyncpg.Record | None:
+    return await _fetch_one(
+        "SELECT unban_at FROM temp_bans WHERE guild_id = $1 AND user_id = $2", guild_id, user_id
+    )
+
+
+async def get_case_counts_for_user(guild_id: int, user_id: int) -> dict[str, int]:
+    rows = await _fetch_all(
+        "SELECT action_type, COUNT(*) AS total FROM cases WHERE guild_id = $1 AND user_id = $2 GROUP BY action_type",
+        guild_id, user_id,
+    )
+    return {row["action_type"]: row["total"] for row in rows}
 
 
 # --- Global blacklist ---------------------------------------------------------

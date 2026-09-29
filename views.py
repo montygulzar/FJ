@@ -2,25 +2,35 @@ import discord
 
 import embeds as embeds_module
 from config import APPEAL_URL, BRAND_NAME
-from embeds import DANGER_COLOR, NEUTRAL_COLOR, build_case_line
+from embeds import NEUTRAL_COLOR, WARNING_COLOR, branded, build_case_line, build_notice_embed
 
 
 class BanAppealView(discord.ui.View):
-    """A persistent link button attached to ban DMs so the recipient can appeal easily."""
+    """Buttons attached to ban DMs.
 
-    def __init__(self) -> None:
-        # timeout=None means the button stays active indefinitely in the DM.
+    - "Submit an appeal" (in-Discord appeal) only when `appealable` - that is, for
+      temporary bans - and an appeals channel is configured. Permanent bans never
+      get it.
+    - "Appeals server" link whenever APPEAL_URL is set and there's no in-Discord option.
+    """
+
+    def __init__(self, guild_id: int | None = None, *, appealable: bool = False) -> None:
+        # timeout=None means the buttons stay active indefinitely in the DM.
         super().__init__(timeout=None)
-        if not APPEAL_URL:
-            return  # No appeals server configured - send the DM without a button.
-        self.add_item(
-            discord.ui.Button(
-                label="Appeal your ban",
-                style=discord.ButtonStyle.link,
-                url=APPEAL_URL,
-                emoji="📝",
+        from cogs.appeals import AppealButton, appeals_enabled
+
+        self.has_appeal_button = bool(appealable and guild_id and appeals_enabled())
+        if self.has_appeal_button:
+            self.add_item(AppealButton(guild_id))
+        elif APPEAL_URL:
+            self.add_item(
+                discord.ui.Button(
+                    label="Appeals server",
+                    style=discord.ButtonStyle.link,
+                    url=APPEAL_URL,
+                    emoji="\U0001F4DD",
+                )
             )
-        )
 
 
 class ConfirmView(discord.ui.View):
@@ -33,7 +43,8 @@ class ConfirmView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "Only the person who ran this command can respond to this.", ephemeral=True
+                embed=build_notice_embed("Only the person who ran this command can respond to this.", success=False),
+                ephemeral=True,
             )
             return False
         return True
@@ -115,7 +126,8 @@ class CasesPaginatorView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "Only the person who ran this command can page through this.", ephemeral=True
+                embed=build_notice_embed("Only the person who ran this command can page through this.", success=False),
+                ephemeral=True,
             )
             return False
         return True
@@ -144,12 +156,9 @@ class CasesPaginatorView(discord.ui.View):
 
 def build_confirm_prompt(description: str) -> discord.Embed:
     embed = discord.Embed(
-        title="Confirm Global Action",
+        title="\u26A0\uFE0F  Confirm global action",
         description=description,
-        color=DANGER_COLOR,
+        color=WARNING_COLOR,
     )
-    embed.set_footer(
-        text="This affects every server the bot is in.",
-        icon_url=embeds_module.BRAND_ICON_URL,
-    )
-    return embed
+    embed.add_field(name="Heads up", value="This affects every server the bot is in. You have 30 seconds.", inline=False)
+    return branded(embed)

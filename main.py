@@ -44,6 +44,9 @@ INITIAL_COGS = (
     "cogs.server_logs",
     "cogs.alt_detector",
     "cogs.backup",
+    "cogs.appeals",
+    "cogs.help",
+    "cogs.userinfo",
 )
 
 
@@ -79,6 +82,7 @@ class ModBot(commands.Bot):
             allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),
         )
         self.health = HealthServer(self)
+        self.app_command_ids: dict[str, int] = {}
 
     async def setup_hook(self) -> None:
         loaded, failed = 0, []
@@ -96,6 +100,8 @@ class ModBot(commands.Bot):
 
         try:
             synced = await self.tree.sync()
+            # Lets /help render clickable </command:id> mentions.
+            self.app_command_ids = {command.name: command.id for command in synced}
             logger.info("Synced %d slash command(s)", len(synced))
         except discord.HTTPException as error:
             # Usually a rate limit. The bot still works via prefix commands and the

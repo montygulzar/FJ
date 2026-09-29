@@ -7,6 +7,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs.channel_moderation import lock_channel, resolve_lockdown_roles, unlock_channel
+from durations import duration_autocomplete, duration_error, parse_duration
+from reasons import reason_autocomplete
 from config import APPROVED_GUILD_IDS, GLOBAL_ACTION_EXEMPT_GUILD_IDS
 from database import (
     add_blacklist,
@@ -23,11 +25,13 @@ from embeds import (
     SUCCESS_COLOR,
     audit_reason,
     base_embed,
+    branded,
     build_ban_dm_embed,
     build_dm_notice_embed,
     build_notice_embed,
     build_summary_embed,
     clamp,
+    format_duration,
     format_timestamp,
 )
 from guards import from_approved_guild, has_tier, is_protected
@@ -35,7 +39,7 @@ from modlog import _resolve_channel, post_to_log_channel, record_case, try_dm
 from views import BanAppealView
 from views import ConfirmView, build_confirm_prompt
 
-MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap: 28 days
+MAX_TIMEOUT = timedelta(days=28)  # Discord's own cap on a timeout
 BLACKLIST_PAGE_SIZE = 20
 
 logger = logging.getLogger("modbot.global_moderation")
@@ -125,6 +129,7 @@ class GlobalModeration(commands.Cog):
 
     @commands.hybrid_command(name="globalkick", description="Kick a user from every server the bot shares with them")
     @app_commands.describe(user="The user to kick everywhere", reason="Why they're being kicked")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("gov")
     @from_approved_guild()
@@ -146,6 +151,7 @@ class GlobalModeration(commands.Cog):
 
     @commands.hybrid_command(name="globalban", description="Ban a user from every server the bot is in")
     @app_commands.describe(user="The user to ban everywhere", reason="Why they're being banned")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("gov")
     @from_approved_guild()
@@ -169,6 +175,7 @@ class GlobalModeration(commands.Cog):
 
     @commands.hybrid_command(name="globalunban", description="Unban a user from every server the bot is in")
     @app_commands.describe(user="The user to unban everywhere", reason="Why they're being unbanned")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("gov")
     @from_approved_guild()
@@ -186,9 +193,10 @@ class GlobalModeration(commands.Cog):
     @commands.hybrid_command(name="globalmute", description="Timeout a user in every server the bot shares with them")
     @app_commands.describe(
         user="The user to mute everywhere",
-        duration_minutes="How long to mute for, in minutes (max 40320 = 28 days)",
+        duration="How long, e.g. 30m, 2h, 1d, 1w - max 28d",
         reason="Why they're being muted",
     )
+    @app_commands.autocomplete(duration=duration_autocomplete, reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("gov")
     @from_approved_guild()
@@ -196,20 +204,25 @@ class GlobalModeration(commands.Cog):
         self,
         ctx: commands.Context,
         user: discord.User,
-        duration_minutes: app_commands.Range[int, 1, 40320],
+        duration: str,
         *,
         reason: str = "No reason provided",
     ):
         if await refuse_protected(ctx, user):
             return
+        problem = duration_error(duration, MAX_TIMEOUT)
+        if problem:
+            await ctx.send(embed=build_notice_embed(problem, success=False), ephemeral=True)
+            return
+        length = parse_duration(duration)
         if not await request_confirmation(
-            ctx, f"Mute **{user}** for {duration_minutes} minutes in every shared server?"
+            ctx, f"Mute **{user}** for **{format_duration(length)}** in every shared server?"
         ):
             await ctx.send(embed=build_notice_embed("Global mute cancelled.", success=False))
             return
 
-        await notify_user(user, "global_mute", reason)
-        until = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
+        until = discord.utils.utcnow() + length
+        await try_dm(user, build_dm_notice_embed("global_mute", "all servers", reason, expires_at=until))
         reason_text = audit_reason(ctx.author, "Global mute", reason)
 
         await self.apply_everywhere(
@@ -220,6 +233,7 @@ class GlobalModeration(commands.Cog):
 
     @commands.hybrid_command(name="globalunmute", description="Clear a user's timeout in every shared server")
     @app_commands.describe(user="The user to unmute everywhere", reason="Why they're being unmuted")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("gov")
     @from_approved_guild()
@@ -303,11 +317,12 @@ class GlobalModeration(commands.Cog):
             for row in entries[start : start + BLACKLIST_PAGE_SIZE]
         ]
         embed = base_embed("Global Blacklist", DANGER_COLOR, clamp("\n".join(lines), 4096))
-        embed.set_footer(text=f"Page {page} of {last_page}  \u2022  {len(entries)} total")
+        branded(embed, footer_prefix=f"Page {page} of {last_page}  \u2022  {len(entries)} total")
         await ctx.send(embed=embed)
 
     @globalblacklist.command(name="add", description="Blacklist a user and ban them wherever they are now")
     @app_commands.describe(user="The user to blacklist", reason="Why they're being blacklisted")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("gov")
     @from_approved_guild()

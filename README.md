@@ -4,6 +4,10 @@ Discord moderation bot for FJUSA, based on the NFPD Mod Bot. It uses discord.py,
 PostgreSQL and Docker, and every setting comes from `.env`.
 
 All commands work as slash commands (`/ban`) and prefix commands (`!ban`).
+Start with **`/help`**. It shows only the commands your tier can use, grouped in a
+dropdown. Every reply is a branded embed; set the accent colour with `BRAND_COLOR`.
+
+Developed by **xe2b** (`1195765102725582968`).
 
 ## Tiers
 
@@ -12,19 +16,50 @@ Dev is **user IDs**. `OWNER_IDS` bypass everything.
 
 | Tier | `.env` variable | Commands |
 |---|---|---|
-| **Staff** | `STAFF_ROLE_IDS` | `warn` `mute` `tempmute` `unmute` `kick` `tempban` `unban` `cases` `casesearch` `purge` `slowmode` |
-| **Staff Director** | `STAFF_DIRECTOR_ROLE_IDS` | + `ban` `caseedit` `casedelete` `caseexport` `modstats` `lockdown` `unlock` `addlockdownrole` `removelockdownrole` `clearlockdownroles` |
+| **Staff** | `STAFF_ROLE_IDS` | `warn` `mute` `tempmute` `unmute` `kick` `tempban` `unban` `cases` `casesearch` `purge` `slowmode` `userinfo` + right-click **User Profile** |
+| **Staff Director** | `STAFF_DIRECTOR_ROLE_IDS` | + `ban` `caseedit` `casedelete` `caseexport` `modstats` `lockdown` `unlock` `addlockdownrole` `removelockdownrole` `clearlockdownroles` + **Accept/Deny appeals** |
 | **Gov** | `GOV_ROLE_IDS` | + `globalban` `globalunban` `globalkick` `globalmute` `globalunmute` `globalblacklist list/add/remove/check` `globalannounce` `globallockdown` `globalunlock` `settings` `setlogchannel` `setserverlogchannel` `setannouncechannel` `testlog` `testserverlog` `setraidprotection` `setwarnthresholds` `backupserver` `restorebackup` |
 | **Dev** | `DEV_USER_IDS` | + `debug` `health` `servers` `addrole` |
 
+Anyone can run `/help`.
+
 ### Mutes
 - `/mute` gives the role set in `MUTE_ROLE_ID` and lasts until `/unmute`.
-- `/tempmute` uses Discord's timeout for a set number of minutes (max 28 days).
+- `/tempmute` uses Discord's timeout (max 28 days).
 - `/unmute` removes both the role and any timeout.
 
-### Temp bans
+### Durations and reasons
+`/tempmute`, `/tempban` and `/globalmute` take human durations: `30m`, `2h`,
+`1d12h`, `1w`. A bare number means minutes, and suggestions appear as you type.
+The reason box suggests common reasons from `REASON_PRESETS`, but you can type
+anything.
+
+### User profiles
+`/userinfo @user`, or right-click a user → **Apps → User Profile**, shows:
+- account age, with new accounts flagged
+- when they joined, their roles and their bot tier
+- active punishments: timeout, mute role, ban or tempban expiry, global blacklist
+- whether they're protected
+- their case breakdown and last 3 cases
+
+### Temp bans and appeals
 `/tempban` lifts itself when it expires. Expiry times are stored in Postgres, so
 restarts don't lose them.
+
+When `APPEALS_CHANNEL_ID` is set, the tempban DM gets a **Submit an appeal**
+button:
+1. The user fills in a short form.
+2. The appeal is posted in the appeals channel. The bot fills in their real user
+   ID, account age (new accounts are flagged), previous appeals, case count and
+   the ban reason itself, so none of it can be faked on the form.
+3. Staff Director+ press **Accept** (unbans them, logs a case, DMs them) or
+   **Deny** (optional note, DMs them). Only the first decision counts.
+
+Spam limits: the user must still be banned, only one open appeal per ban, and a
+cooldown after a denial (`APPEAL_COOLDOWN_DAYS`).
+
+**Permanent bans (`/ban`, `/globalban`) can't be appealed through the bot.**
+Their DMs only link to your appeals server if `APPEAL_URL` is set.
 
 ### Global commands (Gov+)
 These apply to every server in `APPROVED_GUILD_IDS` (or every server the bot is
@@ -40,6 +75,12 @@ appeals server, are always skipped.
   it with `/setannouncechannel`; otherwise it uses the mod-log channel).
 - **`/globallockdown`** locks every text channel in every server.
   **`/globalunlock`** puts back exactly the permissions each channel had before.
+
+### Protection
+- `PROTECTED_USER_IDS` and all owners can never be moderated through the bot.
+- With `APPROVED_GUILD_IDS` and `LEAVE_UNAPPROVED_GUILDS=true`, the bot posts a
+  notice and leaves any server it isn't approved for, then DMs the owners.
+- `BLOCKED_USER_IDS` can't use the bot at all.
 
 Every action is recorded as a numbered case, posted to the mod-log channel
 (`/setlogchannel`), and DMed to the user where possible.

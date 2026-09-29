@@ -21,10 +21,12 @@ from embeds import (
     MUTED_COLOR,
     NEUTRAL_COLOR,
     base_embed,
+    branded,
     build_notice_embed,
     clamp,
     format_timestamp,
     style_for,
+    user_line,
 )
 from guards import has_tier
 from modlog import post_to_log_channel
@@ -33,12 +35,16 @@ from views import CasesPaginatorView
 CSV_COLUMNS = ("case_id", "user_id", "moderator_id", "action_type", "reason", "created_at")
 
 
+MEDALS = {1: "\U0001F947", 2: "\U0001F948", 3: "\U0001F949"}
+
+
 def format_leaderboard(rows: list, guild: discord.Guild, id_column: str) -> str:
     lines = []
     for position, row in enumerate(rows, start=1):
         member = guild.get_member(row[id_column])
         name = member.mention if member else f"`{row[id_column]}`"
-        lines.append(f"`{position}.` {name} - **{row['total']}**")
+        rank = MEDALS.get(position, f"`#{position}`")
+        lines.append(f"{rank}  {name}  \u2022  **{row['total']}**")
     return "\n".join(lines)
 
 
@@ -80,22 +86,19 @@ class CaseManagement(commands.Cog):
                     )
                 )
                 return
-        moderator = ctx.guild.get_member(case_row["moderator_id"])
         style = style_for(case_row["action_type"])
-
-        embed = discord.Embed(color=style.color, timestamp=discord.utils.utcnow())
-        embed.set_author(name=f"{style.icon}  Case #{case_row['id']}", icon_url=embeds_module.BRAND_ICON_URL)
+        embed = discord.Embed(color=style.color)
+        embed.set_author(name=f"{style.icon}  {style.title}  \u2022  Case #{case_row['id']}", icon_url=embeds_module.BRAND_ICON_URL)
         embed.set_thumbnail(url=target.display_avatar.url)
-        embed.description = f"**{target}**\n`{target.id}`"
-        embed.add_field(name="Action", value=style.title, inline=True)
+        embed.add_field(name="User", value=user_line(target), inline=True)
+        embed.add_field(name="Moderator", value=f"<@{case_row['moderator_id']}>\n`{case_row['moderator_id']}`", inline=True)
         embed.add_field(
-            name="Moderator",
-            value=moderator.mention if moderator else f"`{case_row['moderator_id']}`",
+            name="When",
+            value=f"{format_timestamp(case_row['created_at'])}\n{format_timestamp(case_row['created_at'], 'R')}",
             inline=True,
         )
-        embed.add_field(name="Reason", value=clamp(case_row["reason"]), inline=False)
-        embed.add_field(name="When", value=format_timestamp(case_row["created_at"]), inline=False)
-        await ctx.send(embed=embed)
+        embed.add_field(name="Reason", value=f">>> {clamp(case_row['reason'], 1000)}", inline=False)
+        await ctx.send(embed=branded(embed, footer_prefix=f"Case #{case_row['id']}"))
 
     @commands.hybrid_command(name="caseedit", description="Correct the reason on an existing case")
     @app_commands.describe(case_id="The case number to edit", new_reason="The corrected reason")
@@ -164,8 +167,10 @@ class CaseManagement(commands.Cog):
         top_moderators = await get_top_moderators(ctx.guild.id)
         most_warned = await get_most_warned_users(ctx.guild.id)
 
-        embed = discord.Embed(color=NEUTRAL_COLOR, timestamp=discord.utils.utcnow())
-        embed.set_author(name=f"Moderation Stats  \u2022  {ctx.guild.name}", icon_url=ctx.guild.icon.url if ctx.guild.icon else None)
+        embed = discord.Embed(title="\U0001F4CA  Moderation Stats", color=NEUTRAL_COLOR)
+        embed.set_author(name=ctx.guild.name, icon_url=ctx.guild.icon.url if ctx.guild.icon else None)
+        if ctx.guild.icon:
+            embed.set_thumbnail(url=ctx.guild.icon.url)
 
         if action_counts:
             total_cases = sum(row["total"] for row in action_counts)
@@ -175,24 +180,24 @@ class CaseManagement(commands.Cog):
                 breakdown_lines.append(f"{style.icon}  {style.title} - **{row['total']}**")
             breakdown = "\n".join(breakdown_lines)
             embed.description = f"**{total_cases}** cases on record."
-            embed.add_field(name="Breakdown", value=breakdown, inline=False)
+            embed.add_field(name="\U0001F4CB  Breakdown", value=breakdown, inline=False)
         else:
             embed.description = "No cases recorded yet."
 
         if top_moderators:
             embed.add_field(
-                name="Most Active Moderators",
+                name="\U0001F6E1\uFE0F  Most Active Moderators",
                 value=format_leaderboard(top_moderators, ctx.guild, "moderator_id"),
                 inline=False,
             )
         if most_warned:
             embed.add_field(
-                name="Most Warned Members",
+                name="\u26A0\uFE0F  Most Warned Members",
                 value=format_leaderboard(most_warned, ctx.guild, "user_id"),
                 inline=False,
             )
 
-        await ctx.send(embed=embed)
+        await ctx.send(embed=branded(embed))
 
 
 async def setup(bot: commands.Bot):

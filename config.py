@@ -107,11 +107,30 @@ if not COMMAND_PREFIX:
 
 BRAND_NAME = os.environ.get("BRAND_NAME", "FJUSA Mod Bot")
 
+# Accent colour for embeds, as hex (e.g. 1D4ED8).
+def _parse_color(name: str, default: int) -> int:
+    raw_value = _env(name).lstrip("#")
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value, 16)
+    except ValueError:
+        _errors.append(f"{name} must be a hex colour like 1D4ED8, got: {raw_value!r}")
+        return default
+    if not 0 <= value <= 0xFFFFFF:
+        _errors.append(f"{name} must be between 000000 and FFFFFF, got: {raw_value!r}")
+        return default
+    return value
+
+
+BRAND_COLOR = _parse_color("BRAND_COLOR", 0x1D4ED8)
+
 # Name used in ban DMs ("You have been banned from all FJUSA servers").
 SERVER_DISPLAY_NAME = _env("SERVER_DISPLAY_NAME", "FJUSA")
 
-# Shown when the bot leaves an unapproved server, e.g. "yourname (Discord ID 123...)".
-DEVELOPER_CONTACT = _env("DEVELOPER_CONTACT")
+# Bot developer, shown in the unapproved-server notice and the /help footer.
+DEVELOPER_NAME = _env("DEVELOPER_NAME", "xe2b")
+DEVELOPER_ID = _env("DEVELOPER_ID", "1195765102725582968")
 
 # Invite to the appeals server. Ban DMs show an "Appeal your ban" button when set.
 APPEAL_URL = _env("APPEAL_URL")
@@ -131,6 +150,23 @@ STAFF_ROLE_IDS = _parse_id_list("STAFF_ROLE_IDS")
 STAFF_DIRECTOR_ROLE_IDS = _parse_id_list("STAFF_DIRECTOR_ROLE_IDS")
 GOV_ROLE_IDS = _parse_id_list("GOV_ROLE_IDS")
 DEV_USER_IDS = _parse_id_list("DEV_USER_IDS")
+
+# Reasons suggested as you type in /warn, /ban, /mute etc. Separate with |
+REASON_PRESETS = [
+    reason.strip()
+    for reason in _env(
+        "REASON_PRESETS",
+        "Spamming|Harassment|NSFW content|Advertising|Trolling|Disrespecting staff|"
+        "Breaking server rules|Ban evasion|Alt account|Exploiting",
+    ).split("|")
+    if reason.strip()
+]
+
+# Appeals submitted from ban DMs are posted here for Staff Director+ to accept or
+# deny. Leave empty to turn in-Discord appeals off (APPEAL_URL still works).
+APPEALS_CHANNEL_ID = _parse_int("APPEALS_CHANNEL_ID", 0, minimum=0)
+# How long someone must wait to appeal again after a denial.
+APPEAL_COOLDOWN_DAYS = _parse_int("APPEAL_COOLDOWN_DAYS", 7, minimum=0, maximum=365)
 
 # Role given by /mute and removed by /unmute. /tempmute uses Discord's timeout
 # instead and needs no role. The ID must be the same role in every server, or

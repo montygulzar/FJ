@@ -6,17 +6,26 @@ from discord.ext import commands
 
 from config import MUTE_ROLE_ID
 from database import add_temp_ban, get_guild_settings, get_warn_count, remove_temp_ban
-from embeds import audit_reason, build_ban_dm_embed, build_dm_notice_embed, build_notice_embed
+from durations import duration_autocomplete, duration_error, parse_duration
+from embeds import audit_reason, build_ban_dm_embed, build_dm_notice_embed, build_notice_embed, format_duration
 from guards import has_tier, refusal_reason
 from modlog import announce_case, record_case, try_dm
+from reasons import reason_autocomplete
 from views import BanAppealView
 
-MAX_TIMEOUT_MINUTES = 40320  # Discord's own cap: 28 days
-MAX_TEMPBAN_MINUTES = 525600  # 1 year
+MAX_TIMEOUT = timedelta(days=28)  # Discord's own cap on a timeout
+MAX_TEMPBAN = timedelta(days=365)
+
+DURATION_HELP = "How long, e.g. 30m, 2h, 1d12h, 1w (a bare number means minutes)"
 
 
-async def notify_member(member: discord.Member, action_type: str, guild_name: str, reason: str) -> None:
-    await try_dm(member, build_dm_notice_embed(action_type, guild_name, reason))
+async def notify_member(
+    member: discord.Member, action_type: str, reason: str, *, expires_at=None
+) -> None:
+    await try_dm(
+        member,
+        build_dm_notice_embed(action_type, member.guild.name, reason, guild=member.guild, expires_at=expires_at),
+    )
 
 
 async def perform_or_report(ctx: commands.Context, action_label: str, coroutine) -> bool:
@@ -36,6 +45,10 @@ async def perform_or_report(ctx: commands.Context, action_label: str, coroutine)
         return False
 
 
+async def refuse(ctx: commands.Context, message: str) -> None:
+    await ctx.send(embed=build_notice_embed(message, success=False), ephemeral=True)
+
+
 class Moderation(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -53,15 +66,15 @@ class Moderation(commands.Cog):
         else:
             return
 
+        duration = None
         try:
             if action_type == "ban":
                 await member.ban(reason=reason)
             elif action_type == "kick":
                 await member.kick(reason=reason)
             else:
-                mute_minutes = max(1, settings["warn_mute_minutes"] or 60)
-                until = discord.utils.utcnow() + timedelta(minutes=mute_minutes)
-                await member.timeout(until, reason=reason)
+                duration = timedelta(minutes=max(1, settings["warn_mute_minutes"] or 60))
+                await member.timeout(discord.utils.utcnow() + duration, reason=reason)
         except discord.HTTPException:
             await ctx.send(
                 embed=build_notice_embed(
@@ -72,21 +85,23 @@ class Moderation(commands.Cog):
             )
             return
 
-        await announce_case(ctx, member, action_type, reason, moderator=self.bot.user)
+        embed = await record_case(ctx.guild, member, self.bot.user, action_type, reason, duration=duration)
+        await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="kick", description="Kick a member from this server")
     @app_commands.describe(member="The member to kick", reason="Why they're being kicked")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("staff")
     @commands.bot_has_permissions(kick_members=True)
     async def kick(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         refusal = refusal_reason(ctx.author, member, self.bot.user.id)
         if refusal:
-            await ctx.send(embed=build_notice_embed(refusal, success=False))
+            await refuse(ctx, refusal)
             return
 
         await ctx.defer()
-        await notify_member(member, "kick", ctx.guild.name, reason)
+        await notify_member(member, "kick", reason)
         succeeded = await perform_or_report(
             ctx, "kick", member.kick(reason=audit_reason(ctx.author, "Kick", reason))
         )
@@ -95,18 +110,25 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="ban", description="Permanently ban a member from this server")
     @app_commands.describe(member="The member to ban", reason="Why they're being banned")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("staff_director")
     @commands.bot_has_permissions(ban_members=True)
     async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         refusal = refusal_reason(ctx.author, member, self.bot.user.id)
         if refusal:
-            await ctx.send(embed=build_notice_embed(refusal, success=False))
+            await refuse(ctx, refusal)
             return
 
         await ctx.defer()
-        # DM the ban notice with the appeal button before removing them from the server.
-        await try_dm(member, build_ban_dm_embed(reason), BanAppealView())
+        # DM before removing them from the server. Permanent bans can't be appealed
+        # through the bot, so this view never carries the in-DM appeal button.
+        view = BanAppealView(guild_id=ctx.guild.id)
+        await try_dm(
+            member,
+            build_ban_dm_embed(reason, guild=ctx.guild, can_appeal_here=view.has_appeal_button),
+            view,
+        )
         succeeded = await perform_or_report(
             ctx, "ban", member.ban(reason=audit_reason(ctx.author, "Ban", reason))
         )
@@ -114,11 +136,8 @@ class Moderation(commands.Cog):
             await announce_case(ctx, member, "ban", reason)
 
     @commands.hybrid_command(name="tempban", description="Ban a member and automatically unban them later")
-    @app_commands.describe(
-        member="The member to ban",
-        duration_minutes="How long the ban lasts, in minutes",
-        reason="Why they're being banned",
-    )
+    @app_commands.describe(member="The member to ban", duration=DURATION_HELP, reason="Why they're being banned")
+    @app_commands.autocomplete(duration=duration_autocomplete, reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("staff")
     @commands.bot_has_permissions(ban_members=True)
@@ -126,20 +145,32 @@ class Moderation(commands.Cog):
         self,
         ctx: commands.Context,
         member: discord.Member,
-        duration_minutes: app_commands.Range[int, 1, 525600],
+        duration: str,
         *,
         reason: str = "No reason provided",
     ):
-        refusal = refusal_reason(ctx.author, member, self.bot.user.id)
+        refusal = refusal_reason(ctx.author, member, self.bot.user.id) or duration_error(duration, MAX_TEMPBAN)
         if refusal:
-            await ctx.send(embed=build_notice_embed(refusal, success=False))
+            await refuse(ctx, refusal)
             return
 
         await ctx.defer()
-        unban_at = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
+        length = parse_duration(duration)
+        unban_at = discord.utils.utcnow() + length
         # Show the expiry time in the DM so they know exactly when the ban lifts.
-        expiry_str = discord.utils.format_dt(unban_at, style="F")
-        await try_dm(member, build_ban_dm_embed(reason, unban_at=expiry_str), BanAppealView())
+        expiry_str = (
+            f"{format_duration(length)} - ends {discord.utils.format_dt(unban_at, 'F')} "
+            f"({discord.utils.format_dt(unban_at, 'R')})"
+        )
+        # Temporary bans are the only ones that can be appealed through the bot.
+        view = BanAppealView(guild_id=ctx.guild.id, appealable=True)
+        await try_dm(
+            member,
+            build_ban_dm_embed(
+                reason, unban_at=expiry_str, guild=ctx.guild, can_appeal_here=view.has_appeal_button
+            ),
+            view,
+        )
 
         succeeded = await perform_or_report(
             ctx, "ban", member.ban(reason=audit_reason(ctx.author, "Tempban", reason))
@@ -148,12 +179,14 @@ class Moderation(commands.Cog):
             return
 
         await add_temp_ban(ctx.guild.id, member.id, unban_at)
-        embed = await record_case(ctx.guild, member, ctx.author, "ban", reason)
-        embed.add_field(name="Expires", value=discord.utils.format_dt(unban_at, style="R"), inline=True)
+        embed = await record_case(
+            ctx.guild, member, ctx.author, "tempban", reason, duration=length, expires_at=unban_at
+        )
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="unban", description="Unban a user from this server")
     @app_commands.describe(user="The user to unban", reason="Why they're being unbanned")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("staff")
     @commands.bot_has_permissions(ban_members=True)
@@ -173,44 +206,46 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="warn", description="Warn a member")
     @app_commands.describe(member="The member to warn", reason="Why they're being warned")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("staff")
     async def warn(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         refusal = refusal_reason(ctx.author, member, self.bot.user.id, check_hierarchy=False)
         if refusal:
-            await ctx.send(embed=build_notice_embed(refusal, success=False))
+            await refuse(ctx, refusal)
             return
 
         await ctx.defer()
-        await notify_member(member, "warn", ctx.guild.name, reason)
-        await announce_case(ctx, member, "warn", reason)
+        await notify_member(member, "warn", reason)
+        embed = await record_case(ctx.guild, member, ctx.author, "warn", reason)
 
         warn_count = await get_warn_count(ctx.guild.id, member.id)
+        embed.add_field(name="Total warnings", value=f"**{warn_count}**", inline=True)
+        await ctx.send(embed=embed)
         await self.escalate_if_needed(ctx, member, warn_count)
 
     @commands.hybrid_command(name="mute", description="Mute a member with the mute role until they are unmuted")
     @app_commands.describe(member="The member to mute", reason="Why they're being muted")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("staff")
     @commands.bot_has_permissions(manage_roles=True)
     async def mute(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         refusal = refusal_reason(ctx.author, member, self.bot.user.id)
         if refusal:
-            await ctx.send(embed=build_notice_embed(refusal, success=False))
+            await refuse(ctx, refusal)
             return
 
         mute_role = ctx.guild.get_role(MUTE_ROLE_ID) if MUTE_ROLE_ID else None
         if mute_role is None:
-            await ctx.send(
-                embed=build_notice_embed(
-                    "No mute role is set up for this server. Set `MUTE_ROLE_ID` in the bot's .env, "
-                    "or use `/tempmute` instead.",
-                    success=False,
-                )
+            await refuse(
+                ctx,
+                "No mute role is set up for this server. Set `MUTE_ROLE_ID` in the bot's .env, "
+                "or use `/tempmute` instead.",
             )
             return
         if mute_role in member.roles:
-            await ctx.send(embed=build_notice_embed(f"{member.mention} is already muted.", success=False))
+            await refuse(ctx, f"{member.mention} is already muted.")
             return
 
         await ctx.defer()
@@ -220,17 +255,14 @@ class Moderation(commands.Cog):
         if not succeeded:
             return
 
-        await notify_member(member, "mute", ctx.guild.name, reason)
+        await notify_member(member, "mute", reason)
         embed = await record_case(ctx.guild, member, ctx.author, "mute", reason)
-        embed.add_field(name="Expires", value="Never - until unmuted", inline=True)
+        embed.add_field(name="Duration", value="Until unmuted", inline=True)
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="tempmute", description="Timeout a member for a set duration")
-    @app_commands.describe(
-        member="The member to mute",
-        duration_minutes="How long to mute for, in minutes (max 40320 = 28 days)",
-        reason="Why they're being muted",
-    )
+    @app_commands.describe(member="The member to mute", duration=DURATION_HELP + " - max 28d", reason="Why they're being muted")
+    @app_commands.autocomplete(duration=duration_autocomplete, reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("staff")
     @commands.bot_has_permissions(moderate_members=True)
@@ -238,30 +270,33 @@ class Moderation(commands.Cog):
         self,
         ctx: commands.Context,
         member: discord.Member,
-        duration_minutes: app_commands.Range[int, 1, 40320],
+        duration: str,
         *,
         reason: str = "No reason provided",
     ):
-        refusal = refusal_reason(ctx.author, member, self.bot.user.id)
+        refusal = refusal_reason(ctx.author, member, self.bot.user.id) or duration_error(duration, MAX_TIMEOUT)
         if refusal:
-            await ctx.send(embed=build_notice_embed(refusal, success=False))
+            await refuse(ctx, refusal)
             return
 
         await ctx.defer()
-        until = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
+        length = parse_duration(duration)
+        until = discord.utils.utcnow() + length
         succeeded = await perform_or_report(
             ctx, "mute", member.timeout(until, reason=audit_reason(ctx.author, "Tempmute", reason))
         )
         if not succeeded:
             return
 
-        await notify_member(member, "tempmute", ctx.guild.name, reason)
-        embed = await record_case(ctx.guild, member, ctx.author, "tempmute", reason)
-        embed.add_field(name="Expires", value=discord.utils.format_dt(until, style="R"), inline=True)
+        await notify_member(member, "tempmute", reason, expires_at=until)
+        embed = await record_case(
+            ctx.guild, member, ctx.author, "tempmute", reason, duration=length, expires_at=until
+        )
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="unmute", description="Remove a member's mute role and any active timeout")
     @app_commands.describe(member="The member to unmute", reason="Why they're being unmuted")
+    @app_commands.autocomplete(reason=reason_autocomplete)
     @commands.guild_only()
     @has_tier("staff")
     @commands.bot_has_permissions(moderate_members=True, manage_roles=True)
@@ -270,7 +305,7 @@ class Moderation(commands.Cog):
         has_mute_role = mute_role is not None and mute_role in member.roles
         is_timed_out = member.is_timed_out()
         if not has_mute_role and not is_timed_out:
-            await ctx.send(embed=build_notice_embed(f"{member.mention} isn't currently muted.", success=False))
+            await refuse(ctx, f"{member.mention} isn't currently muted.")
             return
 
         await ctx.defer()
@@ -289,6 +324,7 @@ class Moderation(commands.Cog):
                 )
             )
             return
+        await notify_member(member, "unmute", reason)
         await announce_case(ctx, member, "unmute", reason)
 
 

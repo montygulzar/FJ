@@ -154,7 +154,7 @@ class ChannelModeration(commands.Cog):
         # Only warn about the 14-day limit when no member filter was in play;
         # otherwise a shortfall usually just means the filter didn't match, not an age cap.
         if member is None and len(deleted) < amount:
-            embed.set_footer(text="Discord can only bulk delete messages under 14 days old.")
+            embed.add_field(name="Note", value="Discord can only bulk delete messages under 14 days old.", inline=False)
 
         await ctx.send(embed=embed)
         await post_to_log_channel(ctx.guild, embed)

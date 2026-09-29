@@ -3,7 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import APPROVED_GUILD_IDS
-from embeds import NEUTRAL_COLOR, audit_reason, base_embed, build_notice_embed, clamp
+from embeds import NEUTRAL_COLOR, audit_reason, base_embed, branded, build_notice_embed, clamp
 from guards import has_tier
 
 GUILDS_PER_EMBED = 10
@@ -71,9 +71,10 @@ class Owner(commands.Cog):
                 ]
                 embed.add_field(name=clamp(guild.name, limit=256), value=clamp("\n".join(lines)), inline=False)
 
-            embed.set_footer(
-                text=f"Page {chunk_start // GUILDS_PER_EMBED + 1} of "
-                f"{(len(guilds) - 1) // GUILDS_PER_EMBED + 1}"
+            branded(
+                embed,
+                footer_prefix=f"Page {chunk_start // GUILDS_PER_EMBED + 1} of "
+                f"{(len(guilds) - 1) // GUILDS_PER_EMBED + 1}",
             )
             await ctx.send(embed=embed)
 

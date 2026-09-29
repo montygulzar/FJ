@@ -103,3 +103,20 @@ class TestIsGlobalTarget:
              patch("cogs.global_moderation.GLOBAL_ACTION_EXEMPT_GUILD_IDS", set()):
             assert is_global_target(self._guild(1))
             assert not is_global_target(self._guild(3))
+
+
+class TestMemberTierIndex:
+    def test_highest_tier_wins(self):
+        member = SimpleNamespace(id=1, roles=[SimpleNamespace(id=STAFF_ROLE), SimpleNamespace(id=GOV_ROLE)])
+        assert guards.member_tier_index(member) == guards.tier_index("gov")
+
+    def test_owner_and_dev(self):
+        assert guards.member_tier_index(SimpleNamespace(id=OWNER_USER, roles=[])) == len(guards._TIERS) - 1
+        assert guards.member_tier_index(SimpleNamespace(id=DEV_USER)) == guards.tier_index("dev")
+
+    def test_no_tier(self):
+        assert guards.member_tier_index(SimpleNamespace(id=5, roles=[SimpleNamespace(id=1)])) is None
+        assert guards.tier_label(None) == "No staff tier"
+
+    def test_has_tier_is_tagged_for_help(self):
+        assert _predicate("gov").fjusa_tier == "gov"

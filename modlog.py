@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timedelta
 
 import discord
 from discord.ext import commands
@@ -153,10 +154,15 @@ async def record_case(
     moderator: discord.abc.User,
     action_type: str,
     reason: str,
+    *,
+    duration: timedelta | None = None,
+    expires_at: datetime | None = None,
 ) -> discord.Embed:
     """Save the case, post it to the mod-log channel, and return the embed."""
     case_id = await add_case(guild.id, target.id, moderator.id, action_type, reason)
-    embed = build_case_embed(action_type, target, moderator, reason, case_id)
+    embed = build_case_embed(
+        action_type, target, moderator, reason, case_id, duration=duration, expires_at=expires_at
+    )
     await post_to_log_channel(guild, embed)
     return embed
 

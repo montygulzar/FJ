@@ -20,7 +20,7 @@ from discord.ext import commands
 
 import embeds as embeds_module
 from config import BRAND_NAME
-from embeds import DANGER_COLOR, NEUTRAL_COLOR, SUCCESS_COLOR, base_embed, build_notice_embed, clamp
+from embeds import NEUTRAL_COLOR, SUCCESS_COLOR, WARNING_COLOR, base_embed, branded, build_notice_embed, clamp
 from guards import has_tier
 from views import ConfirmView
 
@@ -261,15 +261,15 @@ class Backup(commands.Cog):
 
         view = ConfirmView(author_id=ctx.author.id)
         prompt = discord.Embed(
-            title="Confirm Restore",
+            title="\u26A0\uFE0F  Confirm restore",
             description=(
                 f"This will recreate any **missing** roles and channels from the `{original_guild}` "
                 f"backup taken on **{taken_at}**.\n\n"
                 "Existing roles and channels are **not** deleted or modified."
             ),
-            color=DANGER_COLOR,
+            color=WARNING_COLOR,
         )
-        view.message = await ctx.send(embed=prompt, view=view)
+        view.message = await ctx.send(embed=branded(prompt), view=view)
         await view.wait()
 
         if not view.confirmed:
